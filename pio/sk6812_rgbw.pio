@@ -1,0 +1,35 @@
+; SK6812 RGBW, 32 bits per pixel, MSB first.
+; Each bit consumes 11 PIO cycles: T0H=3 cycles and T1H=6 cycles.
+; A blocking pull after every word provides an explicit end-of-frame stall.
+
+.program sk6812_rgbw
+.side_set 1
+
+.wrap_target
+    pull block side 0
+    set y, 31 side 0
+bitloop:
+    out x, 1 side 0 [1]
+    jmp !x do_zero side 1 [2]
+    jmp continue side 1 [2]
+do_zero:
+    nop side 0 [2]
+continue:
+    jmp y-- bitloop side 0 [2]
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+
+static inline void sk6812_rgbw_program_init(PIO pio, uint sm, uint offset,
+                                             uint pin, float bit_rate_hz) {
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+
+    pio_sm_config config = sk6812_rgbw_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&config, pin);
+    sm_config_set_out_shift(&config, false, false, 32);
+    sm_config_set_clkdiv(&config, (float)clock_get_hz(clk_sys) / (bit_rate_hz * 11.0f));
+    pio_sm_init(pio, sm, offset, &config);
+}
+%}

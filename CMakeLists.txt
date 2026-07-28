@@ -35,13 +35,23 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(pico_music_lights pico_music_lights.c )
+add_executable(pico_music_lights
+        pico_music_lights.c
+        src/validation/led_public_api_compile.cpp
+        src/led/rgbw_conversion.cpp
+        src/led/led_strip.cpp
+        src/led/led_output_conversion.cpp
+        src/led/led_output_manager.cpp
+        src/led/sk6812_rgbw_driver.cpp
+        src/led/hardware_bringup.cpp
+        )
 
 pico_set_program_name(pico_music_lights "pico_music_lights")
 pico_set_program_version(pico_music_lights "0.1")
 
 # Generate PIO header
 pico_generate_pio_header(pico_music_lights ${CMAKE_CURRENT_LIST_DIR}/blink.pio)
+pico_generate_pio_header(pico_music_lights ${CMAKE_CURRENT_LIST_DIR}/pio/sk6812_rgbw.pio)
 
 # Modify the below lines to enable/disable output over UART/USB
 pico_enable_stdio_uart(pico_music_lights 0)
@@ -54,6 +64,8 @@ target_link_libraries(pico_music_lights
 # Add the standard include files to the build
 target_include_directories(pico_music_lights PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
+        ${CMAKE_CURRENT_LIST_DIR}/include
+        ${CMAKE_CURRENT_LIST_DIR}/src
 )
 
 # Add any user requested libraries
