@@ -7,13 +7,13 @@
 
 namespace {
 
-constexpr uint16_t kTestPixels = 30;
+constexpr std::array<uint16_t, board::kStripCount> kInstalledPixelCounts = {132, 174, 141, 81, 96, 72};
 constexpr uint8_t kSafeBrightness = 16;
 
 static_assert(sizeof(RgbwColor) == 4, "RGBW pixels must use four bytes");
-static_assert(board::kStripCount == 5, "Expected five LED strips");
+static_assert(board::kStripCount == 6, "Expected six LED strips");
 static_assert(board::kMaxPixelsPerStrip == 300, "Unexpected per-strip limit");
-static_assert(board::kMaxConfiguredPixels == 1200, "Unexpected total limit");
+static_assert(board::kMaxConfiguredPixels == 800, "Unexpected total limit");
 
 LedOutputManager g_manager;
 bool g_ready = false;
@@ -23,10 +23,10 @@ bool initialize_hardware_test() {
                 static_cast<unsigned>(board::kMaxConfiguredPixels * sizeof(RgbwColor)),
                 static_cast<unsigned>(board::kMaxConfiguredPixels * sizeof(uint32_t)),
                 static_cast<unsigned>(board::kMaxConfiguredPixels * (sizeof(RgbwColor) + sizeof(uint32_t))));
-    std::printf("LED resources: PIO0 SM0-SM3, PIO1 SM0, up to five claimed DMA channels, max frame 12.08 ms\n");
+    std::printf("LED resources: PIO0 SM0-SM3, PIO1 SM0-SM1, up to six claimed DMA channels, max installed frame 7.04 ms\n");
     std::array<LedStripConfig, board::kStripCount> configs{};
     for (std::size_t index = 0; index < configs.size(); ++index) {
-        configs[index] = {true, kTestPixels, board::kStripGpios[index], kSafeBrightness,
+        configs[index] = {true, kInstalledPixelCounts[index], board::kStripGpios[index], kSafeBrightness,
                           ChannelOrder::grbw, false};
         std::printf("Strip %u: GPIO %lu, pixels %u, order GRBW, brightness %u\n",
                     static_cast<unsigned>(index + 1),

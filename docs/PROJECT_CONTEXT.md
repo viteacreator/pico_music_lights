@@ -54,9 +54,9 @@ Future sources may include:
 
 ## LED outputs
 
-The controller shall independently control five addressable LED strips.
+The controller shall independently control six addressable LED strips.
 
-The five strips may have different:
+The six strips may have different:
 
 * physical lengths;
 * pixel counts;
@@ -79,6 +79,20 @@ Strip properties:
 - 32 transmitted bits per pixel.
 
 The physical channel transmission order shall be configurable and verified through a hardware test. It shall not be assumed solely from the product listing.
+
+Initial installed strip layout:
+
+| Strip | GPIO | Physical length | Configured pixels |
+| --- | --- | ---: | ---: |
+| 1 | GP2 | 2.20 m | 132 |
+| 2 | GP3 | 2.90 m | 174 |
+| 3 | GP4 | 2.35 m | 141 |
+| 4 | GP5 | 1.35 m | 81 |
+| 5 | GP6 | 1.60 m | 96 |
+| 6 | GP7 | 1.20 m | 72 |
+
+The installed total is 696 pixels. The firmware reserves capacity for at most
+800 configured pixels total, with a separate maximum of 300 pixels per strip.
 
 ## Strip operating modes
 

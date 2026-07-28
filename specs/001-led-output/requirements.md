@@ -2,13 +2,13 @@
 
 ## Goal
 
-Implement the initial addressable LED output subsystem for five independent SK6812 RGBW LED strips.
+Implement the initial addressable LED output subsystem for six independent SK6812 RGBW LED strips.
 
 This feature shall provide:
 
 * the low-level SK6812 RGBW transmission driver;
 * RGBW pixel-buffer management;
-* five independent physical LED outputs;
+* six independent physical LED outputs;
 * static colour tests;
 * dedicated White-channel tests;
 * strip identification tests.
@@ -25,7 +25,7 @@ Music processing, web configuration and persistent storage are excluded from thi
 * Colour channels: Red, Green, Blue and Neutral White
 * Nominal data rate: approximately 800 kbit/s
 * Data size: 32 bits per pixel
-* Number of physical outputs: 5
+* Number of physical outputs: 6
 
 ## Initial GPIO assignment
 
@@ -34,10 +34,24 @@ Music processing, web configuration and persistent storage are excluded from thi
 * Strip 3: GP4
 * Strip 4: GP5
 * Strip 5: GP6
+* Strip 6: GP7
 
 The GPIO assignment shall be declared in one board-configuration location.
 
 GPIO numbers shall not be duplicated throughout the implementation.
+
+The initially installed layout is:
+
+| Strip | GPIO | Length | Pixel count |
+| --- | --- | ---: | ---: |
+| 1 | GP2 | 2.20 m | 132 |
+| 2 | GP3 | 2.90 m | 174 |
+| 3 | GP4 | 2.35 m | 141 |
+| 4 | GP5 | 1.35 m | 81 |
+| 5 | GP6 | 1.60 m | 96 |
+| 6 | GP7 | 1.20 m | 72 |
+
+The installed total is 696 pixels.
 
 ## Electrical assumptions
 
@@ -91,7 +105,9 @@ Initial supported physical orders shall include at least:
 * GRBW;
 * RGBW variants required after hardware testing.
 
-The exact physical order of the user’s strips shall be determined through a hardware test.
+GRBW is the selected temporary hardware-test order because it was confirmed on
+the first connected strip. The physical order of every remaining installed
+strip shall still be confirmed through the per-strip hardware test.
 
 Changing the physical order shall not require modifications to effects or application logic.
 
@@ -171,7 +187,7 @@ The web interface may later allow either:
 The initial implementation shall support:
 
 * initializing one strip;
-* initializing all five strips;
+* initializing all six strips;
 * enabling and disabling a strip;
 * clearing one strip;
 * clearing all strips;
@@ -251,16 +267,17 @@ Until configuration and web control are implemented, the main application shall 
 
 The test shall:
 
-1. initialize all five outputs;
+1. initialize all six outputs;
 2. print the configured GPIO and pixel count for every strip;
 3. identify Strip 1;
 4. identify Strip 2;
 5. identify Strip 3;
 6. identify Strip 4;
 7. identify Strip 5;
-8. fill every strip with a different low-brightness RGBW colour;
-9. include at least one strip using only the dedicated White channel;
-10. continue printing status information over USB serial.
+8. identify Strip 6;
+9. fill every strip with a different low-brightness RGBW colour;
+10. include at least one strip using only the dedicated White channel;
+11. continue printing status information over USB serial.
 
 Example final colours:
 
@@ -269,17 +286,18 @@ Example final colours:
 * Strip 3: low blue;
 * Strip 4: low Neutral White;
 * Strip 5: low combined RGBW colour.
+* Strip 6: another distinct low RGBW colour.
 
 ## PIO architecture
 
 The initial implementation shall use one PIO state machine for each physical
 SK6812 RGBW strip.
 
-Five PIO state machines shall control five independent GPIO outputs.
+Six PIO state machines shall control six independent GPIO outputs.
 
 The state machines shall be distributed across the two RP2040 PIO blocks.
 
-The driver shall support simultaneous transmission on all five outputs.
+The driver shall support simultaneous transmission on all six outputs.
 
 Each strip shall have an independent:
 
@@ -311,14 +329,14 @@ diagnostics.
 The design shall document:
 
 - PIO block and state-machine allocation;
-- how all five transmissions are started;
+- how all six transmissions are started;
 - how completion is detected;
 - how reset/latch timing is enforced;
 - how a shorter strip completes before a longer strip;
 - whether DMA is used independently for every strip.
 
-PIO0 SM0–SM3 shall be enabled in synchronization within PIO0. PIO1 SM0 shall
-be started as part of the same concurrent frame operation; exact cycle-level
+PIO0 SM0–SM3 shall be enabled in synchronization within PIO0. PIO1 SM0–SM1
+shall be started as part of the same concurrent frame operation; exact cycle-level
 phase alignment between PIO0 and PIO1 is not required. A small bounded start
 skew between the PIO blocks is acceptable and shall be documented.
 
@@ -367,7 +385,7 @@ Approved initial values:
 
 ```text
 Maximum pixels per strip: 300
-Maximum configured pixels total: 1200
+Maximum configured pixels total: 800
 Default density: 60 pixels per metre
 ```
 
@@ -402,7 +420,7 @@ The design shall clearly state whether buffers are:
 
 The initial implementation shall use one shared logical RGBW pool and one
 shared packed `uint32_t` DMA transmission pool, both with fixed per-strip
-offsets. Both pools shall have capacity for 1,200 pixels. This is single
+offsets. Both pools shall have capacity for 800 pixels. This is single
 logical buffering; the DMA pool is an output-conversion buffer, not a second
 logical pixel buffer.
 
@@ -499,7 +517,7 @@ Responsible for:
 
 Responsible for:
 
-* ownership of five strip instances;
+* ownership of six strip instances;
 * total-pixel validation;
 * initialization of all outputs;
 * asynchronous frame state and public transmission operations;
@@ -556,7 +574,7 @@ This feature shall not implement for now:
 The feature is complete when:
 
 1. The project builds for Raspberry Pi Pico W.
-2. Five independent SK6812 RGBW outputs are initialized.
+2. Six independent SK6812 RGBW outputs are initialized.
 3. Every transmitted pixel contains 32 bits.
 4. Every strip can use a different pixel count.
 5. Every strip can display independent Red, Green, Blue and White values.
@@ -570,7 +588,7 @@ The feature is complete when:
 13. USB serial output continues to operate.
 14. The design reports all LED-buffer RAM usage.
 15. The test firmware uses limited brightness.
-16. The user confirms the hardware test on all five outputs.
+16. The user confirms the hardware test on all six outputs.
 17. Production frame transmission uses PIO-paced DMA without CPU FIFO polling.
 18. Frame completion is reported only after DMA completion, PIO drain, and the
     reset/latch interval.

@@ -11,10 +11,10 @@ the native host-test target where applicable.
    host target in this task. Verify: the Pico W build and native host test both
    succeed.
 
-2. Add the board LED configuration header declaring GP2–GP6, five strips,
-   the 300-pixel per-strip limit, the 1,200-pixel total limit, and default
+2. Add the board LED configuration header declaring GP2–GP7, six strips,
+   the 300-pixel per-strip limit, the 800-pixel total limit, and default
    density. Update the already compiled validation translation unit to include
-   it. Verify: the Pico W build succeeds and a compile-time check confirms five
+   it. Verify: the Pico W build succeeds and a compile-time check confirms six
    unique GPIO values.
 
 3. Add typed LED status and initialization-result definitions, including
@@ -48,9 +48,9 @@ the native host-test target where applicable.
 
 8. Add `LedOutputManager` public/private source files and add every new `.cpp`
    file to both the Pico and host-test targets in this task. Implement manager
-   ownership of static 1,200-pixel logical and 1,200-word packed pools,
+   ownership of static 800-pixel logical and 800-word packed pools,
    validated fixed slice allocation, and non-overlap. Verify: both builds
-   succeed and host tests reject a 1,201-pixel aggregate and overlapping slices.
+   succeed and host tests reject an 801-pixel aggregate and overlapping slices.
 
 9. Add `pio/sk6812_rgbw.pio` with centralized timing constants and add
    `pico_generate_pio_header()` for it in CMake in this task. Retain
@@ -58,8 +58,8 @@ the native host-test target where applicable.
    assembles both PIO programs and generates both headers.
 
 10. Add the SK6812 driver public/private source files and add every new `.cpp`
-    file to the Pico target in this task. Implement program loading, GP2–GP6
-    setup, PIO0 SM0–SM3 and PIO1 SM0 allocation, and per-strip initialization
+    file to the Pico target in this task. Implement program loading, GP2–GP7
+    setup, PIO0 SM0–SM3 and PIO1 SM0–SM1 allocation, and per-strip initialization
     status. Verify: the Pico W build succeeds and diagnostics distinguish
     `ok`, `partial_success`, and `failed` without marking an uninitialized
     strip usable.
@@ -75,11 +75,11 @@ the native host-test target where applicable.
     bits per pixel, nominal bit timing, and at least 80 µs LOW reset; and this
     path is not used by production frame transmission.
 
-13. Implement concurrent five-strip DMA transmission using one claimed DMA
+13. Implement concurrent six-strip DMA transmission using one claimed DMA
     channel per enabled strip. Pack logical RGBW slices into the static
     `uint32_t` transmission pool before starting DMA; keep active packed slices
     immutable while DMA is active. Synchronize PIO0 SM0–SM3 within PIO0 and
-    start PIO1 SM0 as part of the same frame operation with documented bounded
+    start PIO1 SM0–SM1 as part of the same frame operation with documented bounded
     inter-block skew. Verify: the Pico W build succeeds; unequal strips overlap
     in time; shorter strips receive exactly their configured word count; and
     USB diagnostics remain responsive without CPU FIFO polling.
@@ -111,7 +111,7 @@ the native host-test target where applicable.
 17. Perform and record the physical channel-order, dedicated-white, direction,
     GPIO-output, and unequal-length procedure from `design.md`. Verify: the
     clean Pico W build succeeds and the user records expected and observed
-    results for all five strips while USB serial remains active.
+    results for all six strips while USB serial remains active.
 
 18. Add final RAM and hardware-resource diagnostics. Add compile-time
     assertions for `sizeof(RgbwColor) == 4`, strip count, maximum pixels per

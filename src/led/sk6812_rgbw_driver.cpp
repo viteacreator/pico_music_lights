@@ -26,9 +26,9 @@ bool assignment_for_strip(uint8_t strip_index, PIO& pio, uint& state_machine) {
         state_machine = strip_index;
         return true;
     }
-    if (strip_index == 4) {
+    if (strip_index == 4 || strip_index == 5) {
         pio = pio1;
-        state_machine = 0;
+        state_machine = strip_index - 4;
         return true;
     }
     return false;

@@ -30,25 +30,27 @@ path immediately; no introduced artifact waits for a later integration task.
 
 ## Provisional assumptions and limits
 
-* The required GPIO mapping is GP2, GP3, GP4, GP5, and GP6 for strips 1–5.
+* The required GPIO mapping is GP2, GP3, GP4, GP5, GP6, and GP7 for strips 1–6.
   It is declared only in board configuration.
-* The physical byte order is not yet confirmed. `RGBW` is the initial test
-  default; `GRBW` is also supported. Hardware testing selects the installed
-  strip's order, without changing effects.
+* `RGBW` and `GRBW` are supported. `GRBW` is the selected temporary test order
+  because it was confirmed on Strip 1. Hardware testing shall confirm the
+  order of each remaining installed strip without changing effects.
 * The bit period is provisionally 1.25 µs (800 kbit/s), with protocol pulse
   widths encoded in the later PIO source. The reset/latch LOW interval is at
   least 80 µs.
-* The approved maximum configured total is 1,200 pixels.
-  The maximum remains 300 pixels per strip. Therefore, all five strips may
+* The approved maximum configured total is 800 pixels.
+  The maximum remains 300 pixels per strip. Therefore, all six strips may
   individually support up to 300 pixels, but their combined configured count
-  shall not exceed 1,200 pixels.
+  shall not exceed 800 pixels.
+* The initially installed strips have 132, 174, 141, 81, 96, and 72 pixels,
+  respectively, for a total of 696 pixels.
 * The specified level shifter, common ground, and externally powered strips
   are mandatory electrical preconditions. Firmware cannot make an unsafe
   power arrangement safe.
 
 ## Architecture and ownership
 
-`LedOutputManager` owns exactly five `LedStrip` instances, both static pools,
+`LedOutputManager` owns exactly six `LedStrip` instances, both static pools,
 their lifecycle, resource allocation, validation, diagnostics, and frame
 scheduling. Each `LedStrip` owns configuration only: enabled state, pixel
 count, physical length/density metadata, brightness, order, reversal, GPIO,
@@ -60,8 +62,8 @@ tracking.
 The manager owns two static shared pools with matching slice allocation:
 
 ```cpp
-std::array<RgbwColor, 1200> logical_pixel_pool;
-std::array<uint32_t, 1200> dma_word_pool;
+std::array<RgbwColor, 800> logical_pixel_pool;
+std::array<uint32_t, 800> dma_word_pool;
 ```
 
 At initialization it validates all configurations first, then assigns each
@@ -79,7 +81,7 @@ pool while the packed DMA pool remains immutable for every active DMA transfer.
 This transmission pool is not a second logical buffer: it is the DMA source
 required to move converted data without consuming CPU time during the waveform.
 Double logical buffering is deliberately deferred; it would add a further
-4,800 bytes for a 1,200-pixel configuration.
+3,200 bytes for an 800-pixel configuration.
 
 The manager tracks four frame phases:
 
@@ -104,7 +106,7 @@ None of those layers accesses GPIO, PIO, DMA, or driver timing.
 ## PIO and concurrent-frame design
 
 Feature 001 uses one conventional serial SK6812 state machine per physical
-output — not a single multi-pin packed-parallel state machine. The five
+output — not a single multi-pin packed-parallel state machine. The six
 independent state machines run the same PIO program and are started together:
 
 | Strip | GPIO | PIO block | state machine |
@@ -114,6 +116,7 @@ independent state machines run the same PIO program and are started together:
 | 3 | GP4 | PIO0 | SM2 |
 | 4 | GP5 | PIO0 | SM3 |
 | 5 | GP6 | PIO1 | SM0 |
+| 6 | GP7 | PIO1 | SM1 |
 
 The driver loads the PIO program once into each used PIO instruction memory,
 claims precisely these state machines, configures each output pin and a
@@ -129,7 +132,7 @@ or latching.
 
 For each frame, the CPU converts logical pixels into the DMA pool, then starts
 the configured DMA channels and enables the state machines as a concurrent
-frame operation. PIO0 SM0–SM3 are synchronized within PIO0. PIO1 SM0 is
+frame operation. PIO0 SM0–SM3 are synchronized within PIO0. PIO1 SM0–SM1 are
 started as part of the same frame operation; exact cycle-level phase alignment
 between PIO0 and PIO1 is not required, and a small bounded start skew between
 the blocks is acceptable. DMA, rather than a CPU polling loop, services the
@@ -204,29 +207,29 @@ PIO program, electrical data direction, or effect algorithm.
 ## Capacity, validation, and static RAM budget
 
 All limits are compile-time constants in the board/LED configuration header:
-`kStripCount = 5`, `kMaxPixelsPerStrip = 300`, and
-`kMaxConfiguredPixels = 1200`. Initialization rejects an enabled strip with
+`kStripCount = 6`, `kMaxPixelsPerStrip = 300`, and
+`kMaxConfiguredPixels = 800`. Initialization rejects an enabled strip with
 zero pixels, a count above 300, an unsupported channel order, duplicate GPIO,
-or a sum above 1,200. It also rejects invalid strip/pixel indexes and all
+or a sum above 800. It also rejects invalid strip/pixel indexes and all
 operations on uninitialized strips. Public operations return a typed status;
 the temporary application logs it on USB. Failed validation leaves previously
 valid allocations untouched.
 
-| Item | Formula | Static reserved RAM | Used at 1,200 configured pixels |
+| Item | Formula | Static reserved RAM | Used at 696 installed pixels |
 | --- | --- | ---: | ---: |
-| Logical RGBW pool | 1,200 × 4 bytes | 4,800 B | 4,800 B |
-| Per-strip configuration/state | 5 × `sizeof(LedStrip)` | implementation-dependent | 5 instances |
+| Logical RGBW pool | 800 × 4 bytes | 3,200 B | 2,784 B |
+| Per-strip configuration/state | 6 × `sizeof(LedStrip)` | implementation-dependent | 6 instances |
 | PIO TX FIFOs | hardware-resident | 0 B SRAM | hardware only |
-| Packed DMA-word pool | 1,200 × 4 bytes | 4,800 B | 4,800 B |
-| DMA channel configuration/state | 5 channels | implementation-dependent | 5 channels |
+| Packed DMA-word pool | 800 × 4 bytes | 3,200 B | 2,784 B |
+| DMA channel configuration/state | 6 channels | implementation-dependent | 6 channels |
 | Double buffer | not selected | 0 B | 0 B |
 
 One 300-pixel strip consumes 1,200 bytes in each pool, or 2,400 bytes total.
-The two 4,800-byte pools support 1,200 configured pixels, not all five
-300-pixel maxima (which would require 1,500 pixels / 12,000 bytes across both
+The two 3,200-byte pools support 800 configured pixels, not all six
+300-pixel maxima (which would require 1,800 pixels / 14,400 bytes across both
 pools). `sizeof(LedStrip)` and manager/driver/DMA bookkeeping will be asserted
 and reported after implementation; they are intentionally not guessed here.
-The LED data has a clear fixed reservation of 9,600 bytes and no per-frame
+The LED data has a clear fixed reservation of 6,400 bytes and no per-frame
 allocation.
 
 ## Pure-logic test mechanism
@@ -249,9 +252,10 @@ At 800 kbit/s, one 32-bit RGBW pixel takes 40 µs. A strip send phase is
 | ---: | ---: | ---: |
 | 1 | 40 µs | 120 µs |
 | 300 | 12.00 ms | 12.08 ms |
+| 174 (longest installed strip) | 6.96 ms | 7.04 ms |
 | longest enabled strip N | N × 40 µs | N × 40 µs + 80 µs |
 
-Because sends are concurrent, five unequal strips do not sum their durations;
+Because sends are concurrent, six unequal strips do not sum their durations;
 the longest enabled strip sets the minimum complete-frame duration. Actual PIO
 cycle timing will be derived from the configured system clock and documented
 beside the PIO timing constants when the PIO file is implemented.
@@ -270,12 +274,12 @@ this design task.
 ## Physical test procedure and temporary application
 
 With shared ground, level shifting, and external LED power verified, configure
-safe low brightness and tested counts for all five strips. The temporary
+safe low brightness and tested counts for all six strips. The temporary
 hardware-test application will:
 
 1. call `stdio_init_all()` before LED initialization and print each strip's
    index, GPIO, count, order, reversal, and init result over USB;
-2. initialize all five outputs, then identify one strip at a time;
+2. initialize all six outputs, then identify one strip at a time;
 3. for each strip, display Red, Off, Green, Off, Blue, Off, Neutral White,
    Off at low brightness, recording observed colour and whether the selected
    physical strip is correct;
@@ -287,7 +291,7 @@ hardware-test application will:
 6. configure deliberately different valid counts and verify the marker ends
    at each physical strip end, including a short strip completing before a
    long strip; and
-7. finish with five different low-level RGBW fills, including white-only and
+7. finish with six different low-level RGBW fills, including white-only and
    combined RGBW, while continuing periodic USB status/error prints.
 
 The identification delays are controlled blocking delays only in this test
