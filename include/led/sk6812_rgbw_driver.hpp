@@ -14,6 +14,11 @@ public:
     int dma_channel() const;
     LedStatus claim_dma_channel();
     LedStatus transmit_polling(const uint32_t* words, std::size_t word_count);
+    LedStatus arm_dma(const uint32_t* words, std::size_t word_count);
+    bool dma_complete() const;
+    bool physical_completion_confirmed() const;
+    void* pio_instance() const;
+    uint8_t state_machine() const;
 
 private:
     bool initialized_ = false;

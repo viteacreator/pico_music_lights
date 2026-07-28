@@ -4,6 +4,7 @@
 
 #include "hardware/dma.h"
 #include "hardware/pio.h"
+#include "hardware/regs/pio.h"
 #include "pico/stdlib.h"
 #include "sk6812_rgbw.pio.h"
 
@@ -129,3 +130,36 @@ LedStatus Sk6812RgbwDriver::transmit_polling(const uint32_t* words, std::size_t 
     sleep_us(80u);
     return LedStatus::ok;
 }
+
+LedStatus Sk6812RgbwDriver::arm_dma(const uint32_t* words, std::size_t word_count) {
+    if (!initialized_) return LedStatus::uninitialized;
+    if (dma_channel_ < 0) return LedStatus::dma_channel_unavailable;
+    if (words == nullptr || word_count == 0) return LedStatus::invalid_pixel_count;
+    const PIO pio = static_cast<PIO>(pio_instance_);
+    pio_sm_set_enabled(pio, state_machine_, false);
+    pio_sm_clear_fifos(pio, state_machine_);
+    pio_sm_restart(pio, state_machine_);
+    const uint32_t stall_bit = 1u << (PIO_FDEBUG_TXSTALL_LSB + state_machine_);
+    pio->fdebug = stall_bit;
+    dma_channel_config config = dma_channel_get_default_config(dma_channel_);
+    channel_config_set_transfer_data_size(&config, DMA_SIZE_32);
+    channel_config_set_read_increment(&config, true);
+    channel_config_set_write_increment(&config, false);
+    channel_config_set_dreq(&config, dma_dreq_);
+    dma_channel_configure(dma_channel_, &config, &pio->txf[state_machine_], words,
+                          word_count, false);
+    return LedStatus::ok;
+}
+
+bool Sk6812RgbwDriver::dma_complete() const {
+    return dma_channel_ >= 0 && !dma_channel_is_busy(dma_channel_);
+}
+
+bool Sk6812RgbwDriver::physical_completion_confirmed() const {
+    if (!initialized_ || !dma_complete()) return false;
+    const PIO pio = static_cast<PIO>(pio_instance_);
+    return (pio->fdebug & (1u << (PIO_FDEBUG_TXSTALL_LSB + state_machine_))) != 0;
+}
+
+void* Sk6812RgbwDriver::pio_instance() const { return pio_instance_; }
+uint8_t Sk6812RgbwDriver::state_machine() const { return state_machine_; }
