@@ -36,7 +36,9 @@ pico_sdk_init()
 # Add executable. Default name is the project name, version 0.1
 
 add_executable(pico_music_lights
-        pico_music_lights.c
+        src/audio/audio_app.cpp
+        src/audio/audio_capture.cpp
+        src/audio/audio_processing.cpp
         src/validation/led_public_api_compile.cpp
         src/led/rgbw_conversion.cpp
         src/led/led_strip.cpp
@@ -71,6 +73,7 @@ target_include_directories(pico_music_lights PRIVATE
 target_link_libraries(pico_music_lights 
         hardware_dma
         hardware_pio
+        hardware_adc
         
         )
 

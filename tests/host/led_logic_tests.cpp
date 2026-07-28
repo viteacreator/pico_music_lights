@@ -4,6 +4,7 @@
 #include "led/led_output_conversion.hpp"
 #include "led/rgbw_color.hpp"
 #include "led/rgbw_conversion.hpp"
+#include "audio/audio_processing.hpp"
 
 int main() {
     const RgbwColor color{1, 2, 3, 4};
@@ -35,8 +36,14 @@ int main() {
     const bool reversed_output_ok = pack_strip_for_output(strip) == LedStatus::ok &&
                                     packed[0] == 0x03000000u && packed[1] == 0x01000000u &&
                                     logical[0].red == 10 && logical[1].red == 20;
+    uint16_t audio[kAudioInterleavedSamples]{};
+    for (std::size_t i = 0; i < kAudioSamplesPerChannel; ++i) { audio[i * 3] = 2048; audio[i * 3 + 1] = 2148; audio[i * 3 + 2] = 1948; }
+    AudioProcessor processor{};
+    const AudioLevelFrame silent = process_audio_block(processor, audio, 1, 2);
+    const bool audio_ok = silent.channels[0].dc_offset == 2048 && silent.left == 0 &&
+                          silent.right == 0 && silent.aux == 0 && silent.sequence == 1 && silent.dropped_blocks == 2;
     return (sizeof(color) == 4 && ChannelOrder::rgbw != ChannelOrder::grbw && valid_statuses &&
-            conversion_ok && validation_ok && stable_indexing_ok && reversed_output_ok)
+            conversion_ok && validation_ok && stable_indexing_ok && reversed_output_ok && audio_ok)
                ? 0
                : 1;
 }

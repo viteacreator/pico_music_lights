@@ -3,6 +3,7 @@
 
 #include "board/led_board_config.hpp"
 #include "led/led_output_manager.hpp"
+#include "audio/audio_processing.hpp"
 #include "pico/stdlib.h"
 
 namespace {
@@ -95,4 +96,20 @@ extern "C" void led_hardware_bringup_run_once(void) {
         show_one(strip, "neutral white", kWhite, 1000);
         show_one(strip, "off", kOff, 250);
     }
+}
+
+extern "C" bool led_vu_initialize(void) { return initialize_hardware_test(); }
+extern "C" void led_vu_update(const AudioLevelFrame* frame) {
+    static uint64_t last_update_us = 0;
+    if (frame == nullptr || g_manager.is_frame_in_progress()) { g_manager.poll_frame_completion(); return; }
+    if (time_us_64() - last_update_us < 16667u) return;
+    last_update_us = time_us_64();
+    const uint16_t levels[4] = {frame->left, frame->right, frame->aux, frame->mono};
+    for (std::size_t index = 0; index < board::kStripCount; ++index) {
+        LedStrip* strip = g_manager.strip(index); if (strip == nullptr) continue;
+        const std::size_t lit = index < 4 ? (static_cast<std::size_t>(levels[index]) * strip->pixel_count() / 1024u) : 0;
+        strip->fill({0, 0, 0, 0});
+        for (std::size_t pixel = 0; pixel < lit && pixel < strip->pixel_count(); ++pixel) strip->set_pixel(pixel, {0, 255, 0, 0});
+    }
+    g_manager.start_show_all_enabled();
 }
