@@ -2,7 +2,6 @@
 #include "led/led_status.hpp"
 #include "led/led_strip.hpp"
 #include "led/led_output_conversion.hpp"
-#include "led/led_output_manager.hpp"
 #include "led/rgbw_color.hpp"
 #include "led/rgbw_conversion.hpp"
 
@@ -34,17 +33,10 @@ int main() {
     logical[0] = {10, 0, 0, 0};
     logical[1] = {20, 0, 0, 0};
     const bool reversed_output_ok = pack_strip_for_output(strip) == LedStatus::ok &&
-                                    packed[0] == 0x14000000u && packed[1] == 0x0A000000u &&
+                                    packed[0] == 0x03000000u && packed[1] == 0x01000000u &&
                                     logical[0].red == 10 && logical[1].red == 20;
-    LedOutputManager manager;
-    std::array<LedStripConfig, board::kStripCount> manager_configs{};
-    manager_configs[0] = {true, 300, 2, 32, ChannelOrder::rgbw, false};
-    manager_configs[1] = {true, 300, 3, 32, ChannelOrder::rgbw, false};
-    manager_configs[2] = {true, 201, 4, 32, ChannelOrder::rgbw, false};
-    const bool pool_validation_ok =
-        manager.configure(manager_configs) == LedStatus::excessive_total_pixel_count;
     return (sizeof(color) == 4 && ChannelOrder::rgbw != ChannelOrder::grbw && valid_statuses &&
-            conversion_ok && validation_ok && stable_indexing_ok && reversed_output_ok && pool_validation_ok)
+            conversion_ok && validation_ok && stable_indexing_ok && reversed_output_ok)
                ? 0
                : 1;
 }

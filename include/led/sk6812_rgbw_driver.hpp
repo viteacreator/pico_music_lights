@@ -9,6 +9,7 @@ class Sk6812RgbwDriver {
 public:
     LedStatus initialize(uint8_t strip_index, uint32_t gpio);
     bool initialized() const;
+    bool usable() const;
     uint8_t strip_index() const;
     uint32_t gpio() const;
     int dma_channel() const;
@@ -16,11 +17,16 @@ public:
     LedStatus transmit_polling(const uint32_t* words, std::size_t word_count);
     LedStatus arm_dma(const uint32_t* words, std::size_t word_count);
     bool dma_complete() const;
+    bool tx_fifo_has_word() const;
     bool physical_completion_confirmed() const;
+    void clear_tx_stall();
+    void abort_transmission();
     void* pio_instance() const;
     uint8_t state_machine() const;
 
 private:
+    void reset_to_known_idle_state();
+
     bool initialized_ = false;
     uint8_t strip_index_ = 0;
     uint32_t gpio_ = 0;
@@ -28,4 +34,5 @@ private:
     uint32_t dma_dreq_ = 0;
     void* pio_instance_ = nullptr;
     uint8_t state_machine_ = 0;
+    uint16_t program_offset_ = 0;
 };

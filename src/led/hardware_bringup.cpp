@@ -42,7 +42,17 @@ bool initialize_hardware_test() {
 }
 
 void wait_for_frame() {
-    while (g_manager.poll_frame_completion() == LedStatus::busy) sleep_ms(1);
+    for (;;) {
+        const LedStatus status = g_manager.poll_frame_completion();
+        if (status == LedStatus::busy) {
+            sleep_ms(1);
+            continue;
+        }
+        if (status != LedStatus::ok) {
+            std::printf("Frame completion failed: status %u\n", static_cast<unsigned>(status));
+        }
+        return;
+    }
 }
 
 void show_one(std::size_t selected_strip, const char* phase, RgbwColor color, uint32_t duration_ms) {

@@ -17,6 +17,7 @@ public:
     const LedStrip* strip(std::size_t index) const;
     std::size_t configured_pixel_count() const;
     LedStatus initialize_drivers();
+    LedStatus start_show_one(std::size_t strip_index);
     LedStatus start_show_all_enabled();
     bool is_frame_in_progress() const;
     LedStatus poll_frame_completion();
@@ -29,5 +30,10 @@ private:
     std::array<Sk6812RgbwDriver, board::kStripCount> drivers_{};
     std::size_t configured_pixel_count_ = 0;
     FramePhase phase_ = FramePhase::idle;
+    uint32_t active_strip_mask_ = 0;
     uint64_t latch_deadline_us_ = 0;
+    uint64_t frame_deadline_us_ = 0;
+
+    LedStatus start_show(uint32_t requested_strip_mask);
+    LedStatus timeout_frame();
 };

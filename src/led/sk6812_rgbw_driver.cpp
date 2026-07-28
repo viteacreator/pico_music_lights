@@ -67,17 +67,20 @@ LedStatus Sk6812RgbwDriver::initialize(uint8_t strip_index, uint32_t gpio) {
 
     pio_sm_claim(pio, state_machine);
     sk6812_rgbw_program_init(pio, state_machine, offset, gpio, kSk6812BitRateHz);
-    pio_sm_set_enabled(pio, state_machine, true);
+    pio_sm_set_enabled(pio, state_machine, false);
 
     initialized_ = true;
     strip_index_ = strip_index;
     gpio_ = gpio;
     pio_instance_ = pio;
     state_machine_ = static_cast<uint8_t>(state_machine);
+    program_offset_ = static_cast<uint16_t>(offset);
+    reset_to_known_idle_state();
     return LedStatus::ok;
 }
 
 bool Sk6812RgbwDriver::initialized() const { return initialized_; }
+bool Sk6812RgbwDriver::usable() const { return initialized_ && dma_channel_ >= 0; }
 uint8_t Sk6812RgbwDriver::strip_index() const { return strip_index_; }
 uint32_t Sk6812RgbwDriver::gpio() const { return gpio_; }
 int Sk6812RgbwDriver::dma_channel() const { return dma_channel_; }
@@ -136,11 +139,7 @@ LedStatus Sk6812RgbwDriver::arm_dma(const uint32_t* words, std::size_t word_coun
     if (dma_channel_ < 0) return LedStatus::dma_channel_unavailable;
     if (words == nullptr || word_count == 0) return LedStatus::invalid_pixel_count;
     const PIO pio = static_cast<PIO>(pio_instance_);
-    pio_sm_set_enabled(pio, state_machine_, false);
-    pio_sm_clear_fifos(pio, state_machine_);
-    pio_sm_restart(pio, state_machine_);
-    const uint32_t stall_bit = 1u << (PIO_FDEBUG_TXSTALL_LSB + state_machine_);
-    pio->fdebug = stall_bit;
+    reset_to_known_idle_state();
     dma_channel_config config = dma_channel_get_default_config(dma_channel_);
     channel_config_set_transfer_data_size(&config, DMA_SIZE_32);
     channel_config_set_read_increment(&config, true);
@@ -155,10 +154,38 @@ bool Sk6812RgbwDriver::dma_complete() const {
     return dma_channel_ >= 0 && !dma_channel_is_busy(dma_channel_);
 }
 
+bool Sk6812RgbwDriver::tx_fifo_has_word() const {
+    if (!usable()) return false;
+    const PIO pio = static_cast<PIO>(pio_instance_);
+    return pio_sm_get_tx_fifo_level(pio, state_machine_) != 0;
+}
+
 bool Sk6812RgbwDriver::physical_completion_confirmed() const {
-    if (!initialized_ || !dma_complete()) return false;
+    if (!usable() || !dma_complete()) return false;
     const PIO pio = static_cast<PIO>(pio_instance_);
     return (pio->fdebug & (1u << (PIO_FDEBUG_TXSTALL_LSB + state_machine_))) != 0;
+}
+
+void Sk6812RgbwDriver::clear_tx_stall() {
+    if (!initialized_) return;
+    const PIO pio = static_cast<PIO>(pio_instance_);
+    pio->fdebug = 1u << (PIO_FDEBUG_TXSTALL_LSB + state_machine_);
+}
+
+void Sk6812RgbwDriver::abort_transmission() {
+    reset_to_known_idle_state();
+}
+
+void Sk6812RgbwDriver::reset_to_known_idle_state() {
+    if (!initialized_) return;
+    const PIO pio = static_cast<PIO>(pio_instance_);
+    pio_sm_set_enabled(pio, state_machine_, false);
+    if (dma_channel_ >= 0 && dma_channel_is_busy(dma_channel_)) dma_channel_abort(dma_channel_);
+    pio_sm_clear_fifos(pio, state_machine_);
+    pio_sm_restart(pio, state_machine_);
+    pio_sm_exec(pio, state_machine_, pio_encode_jmp(program_offset_));
+    pio_sm_set_pins_with_mask(pio, state_machine_, 0u, 1u << gpio_);
+    clear_tx_stall();
 }
 
 void* Sk6812RgbwDriver::pio_instance() const { return pio_instance_; }

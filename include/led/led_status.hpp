@@ -16,6 +16,8 @@ enum class LedStatus : uint8_t {
     pio_program_load_failed,
     pio_state_machine_unavailable,
     dma_channel_unavailable,
+    transmission_timeout,
+    invalid_gpio_assignment,
 };
 
 enum class InitializationResult : uint8_t {
