@@ -1,6 +1,12 @@
-# Feature 002 — Tasks
+# Feature 002 — Completed As-Built Tasks
 
-1. Add pure audio types and fixed-point processing with host tests.
-2. Add ADC FIFO/DMA ping-pong capture and short DMA IRQ ownership handoff.
-3. Add rate-limited USB diagnostics and non-blocking VU rendering through the public LED manager API.
-4. Build Pico W firmware, run host tests, and perform the documented physical ADC input test. Every task adds its sources to its build target.
+- [x] Add public audio types and hardware-independent processing.
+- [x] Add ADC round-robin FIFO and ADC-DREQ DMA capture.
+- [x] Add safe two-buffer Free/Filling/Ready/Processing ownership.
+- [x] Add DC, peak, RMS, envelope, and clipping.
+- [x] Add true sample-wise centered L+R mono processing.
+- [x] Add dropped-block and separate FIFO overflow/underflow diagnostics.
+- [x] Add USB reporting and approximately 60 Hz VU renderer.
+- [x] Add and run hardware-independent host-side tests.
+- [x] Build Pico W firmware.
+- [x] Complete physical L, R, and Aux validation.

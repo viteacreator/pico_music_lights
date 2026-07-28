@@ -1,7 +1,13 @@
-# Feature 002 — Design
+# Feature 002 — Tested Design
 
-One dynamically claimed DMA channel is paced by ADC DREQ. ADC round-robin ADC0–ADC2 writes 16-bit FIFO samples into two 1,536-byte static buffers. DMA IRQ only marks a completed buffer, counts overwrite, and starts DMA on the other buffer. It performs neither processing nor logging.
+`audio_capture` owns ADC, ADC FIFO, one dynamically claimed ADC-DREQ DMA channel, IRQ, and two acquisition buffers. `audio_processing` is hardware-independent. `audio_app` schedules normal-loop processing and diagnostics. The VU renderer uses only the public LED manager API; audio DMA continues independently during LED DMA.
 
-Pure `audio_processing` deinterleaves L/R/Aux and uses integer arithmetic. A per-channel Q8 DC estimator initializes from the first block mean and then updates by one sixty-fourth of mean error per block. Peak is absolute centered amplitude; RMS is integer square root of mean square; envelope uses faster attack than release. `AudioLevelFrame` has no ADC or LED dependency.
+## Startup and ownership
 
-The main loop services ready blocks, renders VU frames only when LED frame state is idle, polls LED completion, and rate-limits USB diagnostics. No heap allocation or long delay is used.
+Startup: (1) stop ADC; (2) drain FIFO; (3) clear sticky errors; (4) configure GP26–GP28 and ADC0→ADC1→ADC2 round robin; (5) configure DMA and IRQ; (6) start DMA; (7) start continuous ADC conversion.
+
+Each buffer is `768 × 2 B = 1,536 B`; total static audio-buffer RAM is 3,072 B. States are Free, Filling, Ready, and Processing. DMA writes only Filling. IRQ marks a completed buffer Ready and starts the other only when Free. The main loop atomically marks Ready Processing, processes it, then releases Free. If no safe next buffer exists, the newly completed block is deliberately dropped, counted, and DMA restarts on that safe completed buffer. IRQ performs only handoff, counters, and restart.
+
+## Processing
+
+DC is Q8: initial block mean << 8, then one sixty-fourth of block-mean error. RMS is integer square root of mean square. Envelope attack shift is 1; release shift is 4. Raw ADC 0 and 4095 are low/high clipping. Mono is sample-wise after independent L/R centering and has its own peak/RMS/envelope. Runtime overflow and underflow are separately counted and cleared while preserving FIFO/DREQ configuration.
