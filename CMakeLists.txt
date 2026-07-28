@@ -39,6 +39,8 @@ add_executable(pico_music_lights
         src/audio/audio_app.cpp
         src/audio/audio_capture.cpp
         src/audio/audio_processing.cpp
+        src/audio/spectrum_analyzer.cpp
+        src/audio/spectrum_resampler.cpp
         src/validation/led_public_api_compile.cpp
         src/led/rgbw_conversion.cpp
         src/led/led_strip.cpp

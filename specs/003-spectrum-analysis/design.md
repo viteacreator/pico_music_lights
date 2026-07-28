@@ -9,15 +9,23 @@ behind `SpectrumAnalyzer`, so it can later be replaced without altering
 Hann multiplication and FFT work arrays are `float`; positive-bin power is
 `real² + imaginary²`. The measured target is <=8 ms; 16 ms is the hard limit.
 
-The analyzer owns a static 1,024-sample sliding mono buffer. Normal application
-code owns incoming Feature 002 blocks and calls the analyzer after block
-processing; ADC DMA interrupt ownership is unchanged. A sliding copy retains
-samples 512–1023 after a completed transform. No buffer is shared with DMA.
+The analyzer owns a static 1,024-sample sliding mono buffer. Feature 002
+publishes `CenteredMonoBlock { array<int16_t,256> samples; uint32_t sequence; }`
+after its `AudioProcessor` has independently centered L/R and formed mono once.
+The application owns that block until the analyzer copies it; no analyzer array
+is shared with DMA. A sliding copy retains samples 512–1023 after a completed
+transform. If a complete next window arrives while analysis is still busy, it
+is skipped and `dropped_windows` increments.
 
-Estimated static RAM: mono window 2,048 B; Hann coefficients 4,096 B; FFT real
-4,096 B; FFT imaginary 4,096 B; 385 powers 1,540 B; raw/smoothed display and
-macro state under 300 B; 32-element temporary resampling output 64 B: about
-16.3 KiB total.
+Estimated static SRAM: analyzer mono window 2,048 B; one published
+`CenteredMonoBlock` 512 B; FFT real 4,096 B; FFT imaginary 4,096 B; 385 powers
+1,540 B; raw/smoothed display and macro state under 300 B; 32-element temporary
+resampling output 64 B: about 12.4 KiB plus the caller-owned block. Constant
+flash tables: Hann 4,096 B, 512 complex twiddles 4,096 B, and 1,024-entry
+bit-reversal table 2,048 B, about 10.0 KiB. Tables are `const` and reside in
+flash; this avoids SRAM use but flash reads are part of FFT timing. Temporary
+stack use is limited to scalar locals (under 256 B); no transform array is on
+the stack. Precomputed twiddles avoid per-window sine/cosine work.
 
 ## Exact 32-band mapping
 
@@ -26,26 +34,30 @@ their bin counts. The table is a compile-time constant.
 
 |Band|Bins|Hz approx.|Band|Bins|Hz approx.|
 |---:|---:|---:|---:|---:|---:|
-|0|1–1|31–31|16|52–60|1625–1875|
-|1|2–2|62–62|17|61–71|1906–2219|
-|2|3–3|94–94|18|72–84|2250–2625|
-|3|4–4|125–125|19|85–99|2656–3094|
-|4|5–5|156–156|20|100–116|3125–3625|
-|5|6–7|188–219|21|117–136|3656–4250|
-|6|8–9|250–281|22|137–159|4281–4969|
-|7|10–11|312–344|23|160–186|5000–5813|
-|8|12–14|375–438|24|187–218|5844–6813|
-|9|15–17|469–531|25|219–255|6844–7969|
-|10|18–21|562–656|26|256–276|8000–8625|
-|11|22–25|688–781|27|277–300|8656–9375|
-|12|26–30|812–938|28|301–326|9406–10188|
-|13|31–36|969–1125|29|327–353|10219–11031|
-|14|37–43|1156–1344|30|354–368|11063–11500|
-|15|44–51|1375–1594|31|369–384|11531–12000|
+|0|1–1|31–31|16|32–36|1000–1125|
+|1|2–2|62–62|17|37–42|1156–1313|
+|2|3–3|94–94|18|43–49|1344–1531|
+|3|4–4|125–125|19|50–58|1563–1813|
+|4|5–5|156–156|20|59–68|1844–2125|
+|5|6–6|188–188|21|69–80|2156–2500|
+|6|7–7|219–219|22|81–94|2531–2938|
+|7|8–8|250–250|23|95–110|2969–3438|
+|8|9–9|281–281|24|111–129|3469–4031|
+|9|10–11|312–344|25|130–151|4063–4719|
+|10|12–13|375–406|26|152–177|4750–5531|
+|11|14–16|438–500|27|178–207|5563–6469|
+|12|17–19|531–594|28|208–242|6500–7563|
+|13|20–22|625–688|29|243–283|7594–8844|
+|14|23–26|719–813|30|284–331|8875–10344|
+|15|27–31|844–969|31|332–384|10375–12000|
 
 ## State, compression, and diagnostics
 
-Each of 32 display bands and four macro bands has a smoothed state. The global
+`hann_power_normalization` is the precomputed mean squared Hann coefficient.
+Power uses `2*(real²+imaginary²)/(1024²*hann_power_normalization)` before all
+aggregation. Bands use accumulated energy `sum(power)` and subtract
+`noise_floor_per_bin * bin_count`, not mean power; this prevents equal tones in
+wider bands being artificially weakened. Each of 32 display bands and four macro bands has a smoothed state. The global
 noise floor, gain, attack, release, and reference power are centralized
 provisional constants. Measure current/max analysis duration around transform
 and aggregation. Renderer timing is separately rate-limited.
