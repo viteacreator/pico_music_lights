@@ -60,9 +60,10 @@ uint16_t convert_energy_to_level(float energy,
     const float noise_energy =
         kNoiseFloorPerBin * static_cast<float>(bin_count);
     const float cleaned_energy = std::max(0.0f, energy - noise_energy);
+    const float normalized_energy =
+        cleaned_energy * kSpectrumGain / kReferenceEnergy;
     const float normalized_level =
-        65535.0f * std::sqrt(cleaned_energy * kSpectrumGain) /
-        kReferenceEnergy;
+        65535.0f * std::sqrt(normalized_energy);
     const float clamped_level = std::clamp(normalized_level, 0.0f, 65535.0f);
 
     return smooth_level(static_cast<uint16_t>(clamped_level), previous);
@@ -153,8 +154,10 @@ uint16_t range_bin_count(SpectrumBandRange range) {
 }  // namespace
 
 bool SpectrumAnalyzer::push(const CenteredMonoBlock& block, SpectrumFrame& output) {
-    if (have_input_sequence_ && block.sequence > last_input_sequence_ + 1u) {
-        dropped_windows_ += block.sequence - last_input_sequence_ - 1u;
+    if (have_input_sequence_ && block.sequence != last_input_sequence_ + 1u) {
+        if (sample_count_ != 0) {
+            ++dropped_windows_;
+        }
         sample_count_ = 0;
     }
 

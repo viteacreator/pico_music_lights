@@ -12,6 +12,12 @@ namespace {
 
 constexpr uint64_t kDiagnosticIntervalUs = 125000;
 
+AudioLevelFrame g_audio_frame{};
+CenteredMonoBlock g_centered_mono{};
+SpectrumAnalyzer g_spectrum_analyzer;
+SpectrumFrame g_spectrum_frame{};
+uint32_t g_maximum_analysis_us = 0;
+
 void print_diagnostics(const AudioLevelFrame& frame) {
     std::printf("audio #%lu L %u R %u A %u M %u drop %lu over %lu under %lu\n",
                 static_cast<unsigned long>(frame.sequence),
@@ -41,26 +47,21 @@ int main() {
     std::printf("Audio DMA channel %lu; ADC 96 ksample/s aggregate\n",
                 static_cast<unsigned long>(audio_capture_dma_channel()));
 
-    AudioLevelFrame frame{};
-    CenteredMonoBlock centered_mono{};
-    SpectrumAnalyzer spectrum_analyzer;
-    SpectrumFrame spectrum_frame{};
     uint64_t last_diagnostic_us = 0;
-    uint32_t maximum_analysis_us = 0;
     while (true) {
-        if (audio_capture_process(frame, centered_mono)) {
+        if (audio_capture_process(g_audio_frame, g_centered_mono)) {
             const uint64_t analysis_start_us = time_us_64();
-            if (spectrum_analyzer.push(centered_mono, spectrum_frame)) {
-                spectrum_frame.analysis_time_us =
+            if (g_spectrum_analyzer.push(g_centered_mono, g_spectrum_frame)) {
+                g_spectrum_frame.analysis_time_us =
                     static_cast<uint32_t>(time_us_64() - analysis_start_us);
-                maximum_analysis_us = std::max(maximum_analysis_us,
-                                                spectrum_frame.analysis_time_us);
-                spectrum_frame.maximum_analysis_time_us = maximum_analysis_us;
+                g_maximum_analysis_us = std::max(g_maximum_analysis_us,
+                                                  g_spectrum_frame.analysis_time_us);
+                g_spectrum_frame.maximum_analysis_time_us = g_maximum_analysis_us;
             }
-            led_vu_update(&frame);
+            led_vu_update(&g_audio_frame);
             if (time_us_64() - last_diagnostic_us > kDiagnosticIntervalUs) {
                 last_diagnostic_us = time_us_64();
-                print_diagnostics(frame);
+                print_diagnostics(g_audio_frame);
             }
         } else {
             led_vu_update(nullptr);
