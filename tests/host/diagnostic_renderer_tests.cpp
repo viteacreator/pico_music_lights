@@ -50,7 +50,7 @@ bool test_symmetric_and_macro_zone_boundaries() {
     spectrum.high = 16384;
     std::array<RgbwColor, 10> macro{};
     render_bass_mid_high_zones({macro.data(), macro.size()}, spectrum);
-    return macro[0].red == 255 && macro[3].green == 128 &&
+    return macro[0].red == 255 && macro[4].green == 128 &&
            macro[7].blue == 64;
 }
 

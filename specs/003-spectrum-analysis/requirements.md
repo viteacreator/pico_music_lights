@@ -48,10 +48,16 @@ visual preference, determine future tuning.
 
 ## Diagnostic renderer
 
-The renderer is a temporary scene and defaults **off**. Enabling it configures
-the existing six tested GRBW SK6812 RGBW outputs at brightness 16 and no more
-than 60 frames/s. It uses only the public LED manager logical-pixel API and
-skips an update while LED packing, transmission, or latching is active.
+The LED runtime is initialized at firmware startup when available, while the
+temporary renderer itself defaults **off**. `renderer on` only enables periodic
+frame generation; it does not perform hardware initialization. `renderer off`
+stops future frame generation, but the final transmitted LED frame remains
+latched until an explicit clear feature exists. If LED initialization fails,
+audio/spectrum validation continues without rendering and `renderer on` is
+rejected. When available, the renderer retains the six tested GRBW SK6812 RGBW
+outputs at brightness 16 and no more than 60 frames/s. It uses only the public
+LED manager logical-pixel API and skips an update while LED packing,
+transmission, or latching is active.
 
 The fixed scene is temporary only:
 

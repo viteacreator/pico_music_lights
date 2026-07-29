@@ -20,8 +20,10 @@ SpectrumAnalyzer g_spectrum_analyzer;
 SpectrumFrame g_spectrum_frame{};
 uint32_t g_maximum_analysis_us = 0;
 bool g_diagnostics_enabled = true;
+bool g_renderer_available = false;
 char g_command[kCommandLength]{};
 std::size_t g_command_length = 0;
+bool g_discard_until_end_of_line = false;
 
 struct StatisticsBaseline {
     uint32_t audio_dropped = 0;
@@ -91,7 +93,8 @@ void print_status() {
                 "spectrum windows %lu missing %lu, adc drop %lu over %lu under %lu, "
                 "renderer frames %lu skipped %lu%s\n",
                 g_diagnostics_enabled ? "on" : "off",
-                diagnostic_renderer_is_enabled() ? "on" : "off",
+                !g_renderer_available ? "unavailable" :
+                    (diagnostic_renderer_is_enabled() ? "on" : "off"),
                 static_cast<unsigned long>(g_spectrum_frame.analysis_time_us),
                 static_cast<unsigned long>(g_maximum_analysis_us),
                 static_cast<unsigned long>(
@@ -241,9 +244,17 @@ void process_command(const char* command) {
         g_diagnostics_enabled = false;
         std::printf("Periodic diagnostics disabled\n");
     } else if (std::strcmp(command, "renderer on") == 0) {
-        diagnostic_renderer_set_enabled(true);
+        if (!g_renderer_available) {
+            std::printf("Diagnostic renderer is unavailable because LED initialization failed\n");
+        } else {
+            (void)diagnostic_renderer_set_enabled(true);
+        }
     } else if (std::strcmp(command, "renderer off") == 0) {
-        diagnostic_renderer_set_enabled(false);
+        if (g_renderer_available) {
+            (void)diagnostic_renderer_set_enabled(false);
+        } else {
+            std::printf("Diagnostic renderer is unavailable\n");
+        }
     } else if (std::strcmp(command, "noise measure") == 0) {
         if (g_noise_measurement.active) {
             std::printf("Noise measurement is already active\n");
@@ -275,6 +286,13 @@ void poll_commands() {
 
         const char character = static_cast<char>(input);
 
+        if (g_discard_until_end_of_line) {
+            if (character == '\r' || character == '\n') {
+                g_discard_until_end_of_line = false;
+            }
+            continue;
+        }
+
         if (character == '\r' || character == '\n') {
             if (g_command_length != 0u) {
                 g_command[g_command_length] = '\0';
@@ -286,6 +304,7 @@ void poll_commands() {
 
         if (g_command_length + 1u >= sizeof(g_command)) {
             g_command_length = 0;
+            g_discard_until_end_of_line = true;
             std::printf("Command rejected: line too long\n");
             continue;
         }
@@ -302,11 +321,16 @@ int main() {
     sleep_ms(1500);
     std::printf("Pico Music Lights: Feature 003 physical validation\n");
 
-    if (!diagnostic_renderer_initialize() || !audio_capture_initialize()) {
-        std::printf("Initialization failed\n");
+    if (!audio_capture_initialize()) {
+        std::printf("Fatal error: audio capture initialization failed\n");
         while (true) {
             tight_loop_contents();
         }
+    }
+
+    g_renderer_available = diagnostic_renderer_initialize();
+    if (!g_renderer_available) {
+        std::printf("Diagnostic renderer unavailable; continuing analysis-only validation\n");
     }
 
     std::printf("Audio DMA channel %lu; ADC 96 ksample/s aggregate; renderer default off\n",

@@ -95,9 +95,14 @@ bool diagnostic_renderer_initialize() {
     return g_initialized;
 }
 
-void diagnostic_renderer_set_enabled(bool enabled) {
+bool diagnostic_renderer_set_enabled(bool enabled) {
+    if (!g_initialized) {
+        return false;
+    }
+
     g_enabled = enabled;
     std::printf("Diagnostic renderer %s\n", enabled ? "enabled" : "disabled");
+    return true;
 }
 
 bool diagnostic_renderer_is_enabled() {

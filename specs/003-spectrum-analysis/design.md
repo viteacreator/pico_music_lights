@@ -28,7 +28,7 @@ buffers 3,072 B, and Feature 001 logical plus packed LED pools 6,400 B, plus
 manager/application objects and SDK state. Constant FFT roots reside in flash.
 Temporary renderer stack use is small fixed segment arrays (16 + 5 `uint16_t`)
 and no heap allocation is permitted in capture, analysis, commands, or render.
-The current Release Pico W link reports 17,636 B BSS; the final firmware map
+The current Release Pico W link reports 17,640 B BSS; the final firmware map
 remains the authority for total BSS and stack headroom.
 
 ## Renderer geometry
@@ -51,10 +51,14 @@ Raw diagnostic power is calculated while iterating the existing FFT bins,
 without another FFT or a power array. Mean useful-bin power is total energy
 divided by 384; dominant-bin frequency is `bin × 31.25 Hz`.
 
-The renderer first polls the public LED manager. If a frame is active it skips
-the update; otherwise, if enabled and due, it writes the six distinct spans and
+Audio capture is initialized first and is mandatory. The LED runtime is then
+initialized independently: `ok` and `partial_success` make rendering available,
+while a failure is reported and leaves analysis-only validation running. The
+renderer first polls the public LED manager. If a frame is active it skips the
+update; otherwise, if enabled and due, it writes the six distinct spans and
 starts one asynchronous frame. Audio DMA and audio processing continue during
-LED DMA. The renderer default is disabled.
+LED DMA. The renderer default is disabled; `renderer on` enables frame
+generation only, and `renderer off` leaves the last transmitted frame latched.
 
 The command parser consumes USB bytes with a zero-timeout read into a fixed
 48-byte line buffer. It makes no interrupt calls, alters no ADC/DMA ownership,

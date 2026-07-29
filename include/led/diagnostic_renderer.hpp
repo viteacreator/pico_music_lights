@@ -13,7 +13,7 @@ struct DiagnosticRendererStats {
 // Initializes the fixed, temporary six-strip diagnostic scene. The renderer
 // is disabled by default so spectrum validation can run without LED updates.
 bool diagnostic_renderer_initialize();
-void diagnostic_renderer_set_enabled(bool enabled);
+bool diagnostic_renderer_set_enabled(bool enabled);
 bool diagnostic_renderer_is_enabled();
 void diagnostic_renderer_service();
 void diagnostic_renderer_update(const AudioLevelFrame& audio,
