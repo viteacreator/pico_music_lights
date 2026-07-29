@@ -9,6 +9,7 @@ namespace {
 
 constexpr std::size_t kSpectrumSegments = 16;
 constexpr std::size_t kFrequencyZones = 5;
+constexpr uint16_t kAudioEnvelopeMaximum = 2047u;
 
 bool valid(LogicalRgbwPixels pixels) {
     return pixels.data != nullptr && pixels.size != 0;
@@ -18,6 +19,24 @@ uint8_t scale_channel(uint8_t channel, uint16_t level) {
     const uint32_t scaled = static_cast<uint32_t>(channel) * level + 32767u;
     return static_cast<uint8_t>(std::min<uint32_t>(
         255u, static_cast<uint32_t>(scaled / 65535u)));
+}
+
+uint32_t integer_square_root(uint64_t value) {
+    uint32_t lower = 0;
+    uint32_t upper = 65535u;
+
+    while (lower < upper) {
+        const uint32_t middle = lower + (upper - lower + 1u) / 2u;
+        const uint64_t squared = static_cast<uint64_t>(middle) * middle;
+
+        if (squared <= value) {
+            lower = middle;
+        } else {
+            upper = middle - 1u;
+        }
+    }
+
+    return lower;
 }
 
 RgbwColor scale_color(RgbwColor color, uint16_t level) {
@@ -80,6 +99,17 @@ void clear_logical_pixels(LogicalRgbwPixels pixels) {
     }
 }
 
+uint16_t normalize_audio_envelope_for_diagnostic(uint16_t envelope) {
+    const uint32_t clamped = std::min<uint32_t>(envelope, kAudioEnvelopeMaximum);
+    const uint32_t scaled = clamped * 65535u + kAudioEnvelopeMaximum / 2u;
+    return static_cast<uint16_t>(scaled / kAudioEnvelopeMaximum);
+}
+
+uint16_t normalize_spectrum_level_for_diagnostic(uint16_t level) {
+    const uint64_t expanded = static_cast<uint64_t>(level) * 65535u;
+    return static_cast<uint16_t>(integer_square_root(expanded));
+}
+
 void render_spectrum_32_to_16(LogicalRgbwPixels pixels,
                               const SpectrumFrame& spectrum) {
     if (!valid(pixels)) {
@@ -88,6 +118,9 @@ void render_spectrum_32_to_16(LogicalRgbwPixels pixels,
 
     std::array<uint16_t, kSpectrumSegments> segments{};
     resample_spectrum(spectrum, segments.data(), segments.size());
+    for (uint16_t& segment : segments) {
+        segment = normalize_spectrum_level_for_diagnostic(segment);
+    }
 
     for (std::size_t pixel = 0; pixel < pixels.size; ++pixel) {
         const std::size_t segment = pixel * kSpectrumSegments / pixels.size;
@@ -104,6 +137,9 @@ void render_symmetric_frequency_zones(LogicalRgbwPixels pixels,
 
     std::array<uint16_t, kFrequencyZones> zones{};
     resample_spectrum(spectrum, zones.data(), zones.size());
+    for (uint16_t& zone_level : zones) {
+        zone_level = normalize_spectrum_level_for_diagnostic(zone_level);
+    }
 
     for (std::size_t pixel = 0; pixel < pixels.size; ++pixel) {
         const std::size_t from_nearest_end = std::min(pixel, pixels.size - 1u - pixel);
@@ -128,10 +164,14 @@ void render_bass_mid_high_zones(LogicalRgbwPixels pixels,
         {0, 255, 0, 0},
         {0, 0, 255, 0},
     }};
+    std::array<uint16_t, 3> normalized_levels = levels;
+    for (uint16_t& level : normalized_levels) {
+        level = normalize_spectrum_level_for_diagnostic(level);
+    }
 
     for (std::size_t pixel = 0; pixel < pixels.size; ++pixel) {
         const std::size_t zone = std::min<std::size_t>(2u, pixel * 3u / pixels.size);
-        pixels.data[pixel] = scale_color(colors[zone], levels[zone]);
+        pixels.data[pixel] = scale_color(colors[zone], normalized_levels[zone]);
     }
 }
 
@@ -148,8 +188,10 @@ void render_stereo_center_out(LogicalRgbwPixels pixels,
 
     const std::size_t left_capacity = (pixels.size + 1u) / 2u;
     const std::size_t right_capacity = pixels.size / 2u;
-    const std::size_t left_lit = lit_pixels(left_capacity, left_level);
-    const std::size_t right_lit = lit_pixels(right_capacity, right_level);
+    const std::size_t left_lit = lit_pixels(
+        left_capacity, normalize_audio_envelope_for_diagnostic(left_level));
+    const std::size_t right_lit = lit_pixels(
+        right_capacity, normalize_audio_envelope_for_diagnostic(right_level));
     const std::size_t centre_left = (pixels.size - 1u) / 2u;
     const std::size_t centre_right = (pixels.size + 1u) / 2u;
 
@@ -170,7 +212,8 @@ void render_full_vu(LogicalRgbwPixels pixels,
     }
 
     clear_logical_pixels(pixels);
-    const std::size_t lit = lit_pixels(pixels.size, level);
+    const std::size_t lit = lit_pixels(
+        pixels.size, normalize_audio_envelope_for_diagnostic(level));
 
     for (std::size_t pixel = 0; pixel < lit; ++pixel) {
         pixels.data[pixel] = color;
@@ -184,4 +227,9 @@ bool diagnostic_frame_should_start(bool renderer_enabled,
                                    uint64_t interval_us) {
     return renderer_enabled && !frame_in_progress &&
            now_us - last_update_us >= interval_us;
+}
+
+bool diagnostic_renderer_should_auto_enable(bool runtime_available,
+                                            std::size_t usable_strip_count) {
+    return runtime_available && usable_strip_count != 0u;
 }

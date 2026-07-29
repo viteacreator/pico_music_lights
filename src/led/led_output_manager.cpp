@@ -67,6 +67,18 @@ const LedStrip* LedOutputManager::strip(std::size_t index) const {
 
 std::size_t LedOutputManager::configured_pixel_count() const { return configured_pixel_count_; }
 
+std::size_t LedOutputManager::usable_strip_count() const {
+    std::size_t count = 0;
+
+    for (const Sk6812RgbwDriver& driver : drivers_) {
+        if (driver.usable()) {
+            ++count;
+        }
+    }
+
+    return count;
+}
+
 LedStatus LedOutputManager::initialize_drivers() {
     std::size_t usable = 0;
     std::size_t failed = 0;

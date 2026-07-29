@@ -1,113 +1,125 @@
-# Feature 003 — Spectrum Analysis Physical Validation and Diagnostic Rendering
+# Feature 003.1 — Runtime Stabilization and Q15 Spectrum Backend
 
-## Scope
+## Purpose
 
-Feature 003 consumes the single shared, read-only `CenteredMonoBlock` produced
-by Feature 002. It performs one 1,024-sample FFT per analysis window and
-publishes one shared `SpectrumFrame`; diagnostic views do not run independent
-FFTs. Aux remains excluded from this FFT. This stage adds physical validation,
-raw power diagnostics, a temporary six-strip diagnostic scene, and nonblocking
-USB commands. It does not add an Effect Engine, AGC, beat detection, storage,
-Wi-Fi, or web configuration.
+Feature 003.1 corrects the measured real-time failure of the original
+floating-point spectrum implementation while preserving Feature 001 LED
+transport and Feature 002 capture ownership. The prior Pico W measurement was
+about 63 ms per completed spectrum analysis. Its observed consequences were
+continuous ADC block drops, missing audio blocks, and invalidated spectrum
+windows.
 
-`SpectrumFrame` contains 32 display bands, Bass/Low/Mid/High, sequence,
-analysis timing, dropped-window count, and missing-audio-block count. All
-levels are unsigned 0–65535. `SpectrumDiagnostics` contains raw normalized
-positive-bin energy, the highest raw bin power, and its bin number. These raw
-values are derived from the same completed FFT before floor subtraction,
-gain, level conversion, or smoothing.
+The safe deadline is the approximately 8 ms completed-audio-block period, not
+the approximately 16 ms spectrum output cadence. `SpectrumAnalyzer::push()`
+should preferably take at most 5 ms and must be comfortably below 8 ms. Normal
+continuity counters must not grow. Physical timing remains unverified until the
+owner measures this UF2.
 
-## FFT contract
+## Preserved public contract
 
-Four 256-sample blocks at 32 kHz form the first 1,024-sample window. The next
-window retains 512 samples and accepts two further blocks, giving 50% overlap
-and roughly a 16 ms output cadence. Feature 002 owns adaptive ADC DC removal;
-Feature 003 removes only the arithmetic mean of each completed FFT window
-before applying Hann. It therefore does not repeat adaptive DC estimation.
+The following remain unchanged:
 
-For useful bins 1–384 (31.25 Hz–12 kHz), with `N = 1024` and
-`H = mean(hann²)`, normalized positive-bin power is:
+- `CenteredMonoBlock` input generated once by Feature 002;
+- `SpectrumAnalyzer::push()` and `SpectrumFrame`;
+- 1,024 samples at 32 kHz Mono, 50% overlap, and 16 ms intended output cadence;
+- residual mean removal, bins 1–384, the 32-band table, and Bass/Low/Mid/High
+  ranges;
+- sequence discontinuity, missing-block, and dropped-window semantics;
+- public spectrum level range 0–65535;
+- one shared spectrum result for all six temporary diagnostic strips.
 
-```text
-power[k] = 2 × (real[k]² + imaginary[k]²) / (N² × H)
-```
+No FFT, ADC processing, or LED transport work may run in an interrupt. Aux is
+not part of spectrum analysis.
 
-Band and macro energy is accumulated, never averaged by band width:
+## Q15 backend
 
-```text
-E = sum(power[k])
-clean_E = max(0, E - noise_floor_per_bin × bin_count)
-level = clamp(65535 × sqrt(clean_E × gain / reference_energy), 0, 65535)
-```
+The Pico production backend is a 1,024-point radix-2 fixed-point transform. It
+uses a flash-resident 1,024-entry Q15 Hann table and 512 Q15 complex twiddles;
+there is no runtime trigonometry, dynamic allocation, or float FFT work.
 
-The provisional constants remain unchanged: floor `1.0` normalized power per
-bin, gain `1.0`, reference energy `32768`, attack `1/2`, and release `1/16`.
-The reference is a bin-centred sine of approximately 313 centered ADC counts;
-its first attack-smoothed result is about 32767. Hardware measurements, not
-visual preference, determine future tuning.
+| Quantity | Representation and rule |
+|---|---|
+| Input | signed Q0 ADC-centred counts, normally approximately -2048…2047 |
+| Hann | Q15, 0…32767 representing 0…approximately 1 |
+| Twiddle | complex Q15 cosine and negative sine |
+| Work bins | signed integer ADC-count domain after Q15 coefficient multiply |
+| Stage scaling | every radix-2 stage divides both butterfly results by two, using signed round-to-nearest with ties-to-even |
+| Total FFT scale | `1 / 1024`; bins equal conventional windowed DFT bins divided by 1,024 |
+| Saturation | every Q15 complex multiply and butterfly output is clamped to signed 16-bit range |
+| Power | `2 × (real² + imaginary²)` accumulated in `uint64_t` |
 
-## Diagnostic renderer
-
-The LED runtime is initialized at firmware startup when available, while the
-temporary renderer itself defaults **off**. `renderer on` only enables periodic
-frame generation; it does not perform hardware initialization. `renderer off`
-stops future frame generation, but the final transmitted LED frame remains
-latched until an explicit clear feature exists. If LED initialization fails,
-audio/spectrum validation continues without rendering and `renderer on` is
-rejected. When available, the renderer retains the six tested GRBW SK6812 RGBW
-outputs at brightness 16 and no more than 60 frames/s. It uses only the public
-LED manager logical-pixel API and skips an update while LED packing,
-transmission, or latching is active.
-
-The fixed scene is temporary only:
-
-1. Strip 1: 32 bands resampled to 16 contiguous low-to-high spectrum regions,
-   with a blue/white → cyan/green → red diagnostic gradient.
-2. Strip 2: five weighted-resampled frequency values mirrored about the
-   centre; the outside pair is the lowest zone and the centre is the highest.
-3. Strip 3: contiguous Bass, Mid, High zones. For non-divisible lengths,
-   pixel `i` belongs to `floor(3i / length)`.
-4. Strip 4: Feature 002 Left/Right envelopes, centre-out. For odd lengths the
-   centre pixel belongs to Left and Right begins one pixel to its right.
-5. Strip 5: Feature 002 Mono full-range VU.
-6. Strip 6: Feature 002 Aux full-range VU.
-
-Rendering primitives accept an explicit caller-owned logical pixel span and
-have no GPIO, PIO, DMA, ADC, or FFT-work-buffer knowledge. Their state is not
-globally shared. This preserves the future architecture: each of six strips
-may independently choose effect, source, colours, parameters, direction,
-geometry, and enabled state, while all consume the same read-only audio and
-spectrum frames.
-
-## USB validation controls
-
-Commands are line-based, nonblocking, volatile, and processed only in the
-normal loop:
+Let `H = 0.3746337890625`, the Hann mean-square normalization retained by the
+previous public contract. The Q15 raw bin energy is in squared input-count
+units after the intentional FFT `1 / 1024` scale. The analyzer converts it as:
 
 ```text
-status
-stats reset
-diagnostics on | diagnostics off
-renderer on | renderer off
-noise measure | noise cancel
-help
+normalized_energy = q15_energy / H
+clean_energy = max(0, normalized_energy - noise_floor_per_bin × bin_count)
+level = clamp(65535 × sqrt(clean_energy × gain / reference_energy), 0, 65535)
 ```
 
-The command line buffer has a fixed maximum length. An overlong line produces
-exactly one rejection, then every remaining character of that same line is
-discarded until CR or LF. Its tail cannot be interpreted as another command.
+Thus `noise_floor_per_bin = 1.0`, `gain = 1.0`, and
+`reference_energy = 32768` retain their prior normalized-energy meaning.
+The final 32 display and 4 macro conversions use float/square root. The two
+telemetry-only aggregate diagnostic values are also converted to float after
+integer accumulation. Transform, bin power, and aggregation are integer-only.
 
-`noise measure` collects 192 valid FFT windows (about three seconds), skips
-windows affected by missing blocks or dropped analysis windows, restarts its
-consecutive collection after such a discontinuity, and reports mean raw bin
-power, average and worst raw maximum-bin power, and dominant noise region. It
-never modifies DSP constants.
+Ties-to-even is required for stage division: `+1 / 2` and `-1 / 2` both round
+to zero, while exact half-way values whose retained integer bit is odd round to
+the adjacent even value. This signed-symmetric rule prevents one-count
+butterfly residues from surviving all ten scaled stages as false broadband
+energy. It does not change the `1 / 1024` total FFT scale or the calibration
+constants.
 
-## Acceptance and remaining physical validation
+## Automatic runtime and debug output
 
-Software must build firmware and host-test pure geometry. Physical acceptance
-still requires quiet-input measurements, 80/300/1000/6000 Hz tone checks,
-reference-level evidence when practical, music, all six views, and zero normal
-drop/missing/overflow/underflow counters. Preferred FFT duration is ≤8 ms;
-hard maximum is <16 ms. No physical Feature 003 timing, noise, or tone result
-is claimed until the project owner supplies measurements.
+After boot the firmware automatically initializes USB debug output, mandatory
+audio capture, optional LED runtime, spectrum processing, and the temporary
+renderer. When at least one strip is usable, the renderer is automatically
+enabled. If LED initialization fails, analysis continues in analysis-only mode.
+
+There is no normal serial command workflow. Startup information is retained in
+a fixed static buffer. Audio and renderer operation begin immediately; when
+USB CDC first becomes connected and has room for the complete startup block,
+the block is emitted once. A late-connected terminal therefore still receives
+the build identifier, initialization results, usable strips, sample rates,
+FFT size/overlap/backend, DSP constants, installed pixels, and renderer state.
+Telemetry begins only after that one-time delivery.
+
+USB stdout backpressure is bounded to 1 ms for fatal output. Normal telemetry
+is formatted into one fixed 448-byte buffer and written directly to a 512-byte
+CDC TX buffer only when the complete report fits; otherwise that report is
+skipped. Its raw-power fields are integer normalized-power milli-units
+(`raw_mean_milli`, `raw_max_milli`), so its once-per-second `snprintf` path has
+no floating-point format conversion. It must not hold the main loop for a
+significant fraction of an audio block.
+
+## Renderer-only visual normalization
+
+The temporary renderer automatically uses pure display normalization without
+changing `AudioLevelFrame` or `SpectrumFrame`:
+
+- audio envelopes are clamped and linearly mapped from provisional 0…2047
+  centred-ADC amplitude units to 0…65535 visual units;
+- spectrum and macro levels use a clamped square-root visual curve over their
+  existing 0…65535 range.
+
+These are named provisional rendering constants and curves, not AGC or DSP
+calibration. The temporary six-strip mapping remains unchanged and each pure
+renderer primitive still accepts only its caller-provided logical pixel span.
+
+## Definition of done
+
+Software verification requires warning-clean firmware build, host checks of
+Q15 reference tolerance, silence, 1/2/4-count floor suppression, 8-count
+detection with correct dominant bin and bounded unrelated leakage, signed
+symmetry, residual DC removal, reference level, saturation, frequency
+classification, continuity, and renderer normalization. Physical acceptance
+requires Pico W measurement:
+
+- `fft_us` preferably ≤5,000 and comfortably <8,000;
+- no normal growth of `adc_drop`, `missing_audio_blocks`, or
+  `dropped_windows`;
+- no ADC FIFO overflow/underflow;
+- correct 80/300/1000/6000 Hz classification;
+- automatic visible diagnostic rendering on usable strips.

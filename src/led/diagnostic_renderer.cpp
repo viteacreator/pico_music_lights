@@ -52,11 +52,6 @@ bool configure_manager() {
             ChannelOrder::grbw,
             false,
         };
-        std::printf("LED strip %u: GPIO %lu, pixels %u, GRBW, brightness %u\n",
-                    static_cast<unsigned>(index + 1u),
-                    static_cast<unsigned long>(configs[index].gpio),
-                    static_cast<unsigned>(configs[index].pixel_count),
-                    static_cast<unsigned>(configs[index].brightness));
     }
 
     if (g_manager.configure(configs) != LedStatus::ok) {
@@ -64,8 +59,6 @@ bool configure_manager() {
     }
 
     const LedStatus initialization = g_manager.initialize_drivers();
-    std::printf("LED initialization: %u (0=ok, 1=partial success, 2=failed)\n",
-                static_cast<unsigned>(initialization));
     return initialization == LedStatus::ok ||
            initialization == LedStatus::partial_success;
 }
@@ -88,9 +81,6 @@ bool diagnostic_renderer_initialize() {
         return true;
     }
 
-    std::printf("LED RAM: logical %u B, packed %u B\n",
-                static_cast<unsigned>(board::kMaxConfiguredPixels * sizeof(RgbwColor)),
-                static_cast<unsigned>(board::kMaxConfiguredPixels * sizeof(uint32_t)));
     g_initialized = configure_manager();
     return g_initialized;
 }
@@ -101,12 +91,15 @@ bool diagnostic_renderer_set_enabled(bool enabled) {
     }
 
     g_enabled = enabled;
-    std::printf("Diagnostic renderer %s\n", enabled ? "enabled" : "disabled");
     return true;
 }
 
 bool diagnostic_renderer_is_enabled() {
     return g_enabled;
+}
+
+std::size_t diagnostic_renderer_usable_strip_count() {
+    return g_initialized ? g_manager.usable_strip_count() : 0u;
 }
 
 void diagnostic_renderer_service() {

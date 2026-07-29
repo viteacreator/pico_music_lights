@@ -36,6 +36,7 @@ configure_host_test(audio_processing_tests)
 add_executable(spectrum_analysis_tests
     spectrum_analysis_tests.cpp
     ../../src/audio/spectrum_analyzer.cpp
+    ../../src/audio/spectrum_q15_backend.cpp
     ../../src/audio/spectrum_resampler.cpp
 )
 configure_host_test(spectrum_analysis_tests)

@@ -1,4 +1,5 @@
 #include "audio/spectrum_analyzer.hpp"
+#include "audio/spectrum_q15_backend.hpp"
 #include "audio/spectrum_resampler.hpp"
 
 #include <algorithm>
@@ -10,6 +11,50 @@ namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
 constexpr float kSampleRateHz = 32000.0f;
+
+std::array<int16_t, kSpectrumWindowSamples> make_q15_tone(uint16_t fft_bin,
+                                                           int16_t amplitude) {
+    std::array<int16_t, kSpectrumWindowSamples> samples{};
+
+    for (std::size_t index = 0; index < samples.size(); ++index) {
+        const float angle = 2.0f * kPi * static_cast<float>(fft_bin * index) /
+                            static_cast<float>(kSpectrumWindowSamples);
+        samples[index] = static_cast<int16_t>(amplitude * std::sin(angle));
+    }
+
+    return samples;
+}
+
+float float_reference_q15_domain_energy(
+    const std::array<int16_t, kSpectrumWindowSamples>& samples,
+    uint16_t fft_bin) {
+    int64_t sum = 0;
+    for (int16_t sample : samples) {
+        sum += sample;
+    }
+
+    const float mean = static_cast<float>(sum) /
+                       static_cast<float>(kSpectrumWindowSamples);
+    float real = 0.0f;
+    float imaginary = 0.0f;
+
+    for (std::size_t index = 0; index < samples.size(); ++index) {
+        const float phase = 2.0f * kPi * static_cast<float>(index) /
+                            static_cast<float>(kSpectrumWindowSamples - 1u);
+        const float hann = 0.5f - 0.5f * std::cos(phase);
+        const float angle = 2.0f * kPi * static_cast<float>(fft_bin * index) /
+                            static_cast<float>(kSpectrumWindowSamples);
+        const float sample = (static_cast<float>(samples[index]) - mean) * hann;
+        real += sample * std::cos(angle);
+        imaginary -= sample * std::sin(angle);
+    }
+
+    const float scaled_real = real / static_cast<float>(kSpectrumWindowSamples);
+    const float scaled_imaginary =
+        imaginary / static_cast<float>(kSpectrumWindowSamples);
+    return 2.0f * (scaled_real * scaled_real +
+                   scaled_imaginary * scaled_imaginary);
+}
 
 CenteredMonoBlock make_tone_block(uint32_t fft_bin,
                                   uint32_t block_number,
@@ -100,6 +145,81 @@ bool test_mapping_is_complete() {
     }
 
     return expected_first == kSpectrumPositiveBinLimit + 1u;
+}
+
+bool test_q15_float_reference_and_saturation() {
+    for (const uint16_t bin : {3u, 32u, 192u}) {
+        spectrum_q15::Backend backend{};
+        const auto samples = make_q15_tone(bin, 313);
+        backend.transform(samples);
+
+        const float reference = float_reference_q15_domain_energy(samples, bin);
+        const float actual = static_cast<float>(backend.positive_bin_energy(bin));
+        const float relative_error = std::fabs(actual - reference) /
+                                     std::max(reference, 1.0f);
+        if (relative_error > 0.12f) {
+            return false;
+        }
+    }
+
+    spectrum_q15::Backend silence{};
+    std::array<int16_t, kSpectrumWindowSamples> zero{};
+    silence.transform(zero);
+    if (silence.positive_bin_energy(32) != 0u) {
+        return false;
+    }
+
+    spectrum_q15::Backend saturation{};
+    saturation.transform(make_q15_tone(32, 2047));
+    return saturation.positive_bin_energy(32) > 0u;
+}
+
+bool test_q15_low_level_quantization_and_symmetry() {
+    for (const int16_t amplitude : {1, 2, 4}) {
+        SpectrumAnalyzer analyzer{};
+        SpectrumFrame frame{};
+
+        if (!push_window(analyzer, 32, 0, frame, amplitude) ||
+            maximum_band(frame) != 0u) {
+            return false;
+        }
+    }
+
+    SpectrumAnalyzer detectable_analyzer{};
+    SpectrumFrame detectable{};
+    if (!push_window(detectable_analyzer, 32, 0, detectable, 8) ||
+        maximum_band(detectable) == 0u ||
+        detectable_analyzer.diagnostics().dominant_bin != 32u) {
+        return false;
+    }
+
+    const auto positive_samples = make_q15_tone(32, 8);
+    auto negative_samples = positive_samples;
+    for (int16_t& sample : negative_samples) {
+        sample = static_cast<int16_t>(-sample);
+    }
+
+    spectrum_q15::Backend positive{};
+    spectrum_q15::Backend negative{};
+    positive.transform(positive_samples);
+    negative.transform(negative_samples);
+
+    const uint64_t bin_energy = positive.positive_bin_energy(32);
+    uint64_t largest_unrelated_energy = 0u;
+    for (uint16_t bin = 64u; bin <= kSpectrumPositiveBinLimit; ++bin) {
+        largest_unrelated_energy = std::max(
+            largest_unrelated_energy, positive.positive_bin_energy(bin));
+    }
+
+    std::array<int16_t, kSpectrumWindowSamples> dc{};
+    dc.fill(500);
+    spectrum_q15::Backend dc_backend{};
+    dc_backend.transform(dc);
+
+    return bin_energy > 0u &&
+           bin_energy == negative.positive_bin_energy(32) &&
+           largest_unrelated_energy < bin_energy &&
+           dc_backend.positive_bin_energy(3) == 0u;
 }
 
 bool test_window_timing_and_overlap() {
@@ -315,8 +435,10 @@ bool test_resampling() {
 
 int main() {
     struct NamedTest { const char* name; bool (*run)(); };
-    const std::array<NamedTest, 11> tests{{
+    const std::array<NamedTest, 13> tests{{
         {"mapping", test_mapping_is_complete},
+        {"q15_float_reference", test_q15_float_reference_and_saturation},
+        {"q15_low_level_quantization", test_q15_low_level_quantization_and_symmetry},
         {"window_overlap", test_window_timing_and_overlap},
         {"hann_dc", test_hann_endpoints_and_dc_rejection},
         {"noise_floor_reference", test_noise_floor_and_reference_level},

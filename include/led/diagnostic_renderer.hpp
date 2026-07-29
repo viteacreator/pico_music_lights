@@ -15,6 +15,7 @@ struct DiagnosticRendererStats {
 bool diagnostic_renderer_initialize();
 bool diagnostic_renderer_set_enabled(bool enabled);
 bool diagnostic_renderer_is_enabled();
+std::size_t diagnostic_renderer_usable_strip_count();
 void diagnostic_renderer_service();
 void diagnostic_renderer_update(const AudioLevelFrame& audio,
                                 const SpectrumFrame& spectrum);

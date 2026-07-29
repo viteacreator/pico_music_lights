@@ -6,40 +6,12 @@
 
 namespace {
 
+// The Q15 backend applies a Hann window and scales each of ten radix-2 stages
+// by one half. A returned positive-bin energy is consequently
+// 2 * |DFT(windowed input) / 1024|^2 in squared ADC-count units. Dividing by
+// Hann mean-square H produces the same normalized-energy units used by the
+// original float formula: 2 * |DFT|^2 / (1024^2 * H).
 constexpr float kHannPowerNormalization = 0.3746337890625f;
-constexpr float kFftLengthSquared =
-    static_cast<float>(kSpectrumWindowSamples * kSpectrumWindowSamples);
-constexpr float kPositiveBinPowerScale =
-    2.0f / (kFftLengthSquared * kHannPowerNormalization);
-
-// This provisional floor suppresses residual ADC and floating-point noise.
-// It is measured in normalized single-bin FFT-power units and requires
-// physical noise measurements before final tuning.
-// A bin-centred sine with approximately 313 centered ADC counts amplitude
-// produces this normalized energy after the Hann/FFT normalization.
-constexpr float kHannStepCosine = 0.9999811384617630f;
-constexpr float kHannStepSine = 0.0061418825059791f;
-
-struct ComplexCoefficient {
-    float real;
-    float imaginary;
-};
-
-// One base coefficient per radix-2 stage. These flash-resident constants
-// remove all sine/cosine calls from the FFT itself. Each stage generates its
-// successive roots by complex multiplication.
-constexpr std::array<ComplexCoefficient, 10> kStageTwiddles{{
-    {-1.0f, 0.0f},
-    {0.0f, -1.0f},
-    {0.7071067811865475f, -0.7071067811865475f},
-    {0.9238795325112867f, -0.3826834323650898f},
-    {0.9807852804032304f, -0.19509032201612825f},
-    {0.9951847266721969f, -0.0980171403295606f},
-    {0.9987954562051724f, -0.0490676743274180f},
-    {0.9996988186962042f, -0.0245412285229123f},
-    {0.9999247018391445f, -0.0122715382857199f},
-    {0.9999811752826011f, -0.0061358846491545f},
-}};
 
 uint16_t smooth_level(uint16_t target, uint16_t& previous) {
     if (target > previous) {
@@ -53,94 +25,29 @@ uint16_t smooth_level(uint16_t target, uint16_t& previous) {
     return previous;
 }
 
-uint16_t convert_energy_to_level(float energy,
-                                 uint16_t bin_count,
-                                 uint16_t& previous) {
+uint16_t convert_q15_energy_to_level(uint64_t q15_energy,
+                                     uint16_t bin_count,
+                                     uint16_t& previous) {
+    // This is intentionally one of only 36 final float conversions. FFT,
+    // power calculation, and bin aggregation are integer-only.
+    const float normalized_energy =
+        static_cast<float>(q15_energy) / kHannPowerNormalization;
     const float noise_energy =
         kSpectrumNoiseFloorPerBin * static_cast<float>(bin_count);
-    const float cleaned_energy = std::max(0.0f, energy - noise_energy);
-    const float normalized_energy =
-        cleaned_energy * kSpectrumGain / kSpectrumReferenceEnergy;
-    const float normalized_level =
-        65535.0f * std::sqrt(normalized_energy);
+    const float cleaned_energy = std::max(0.0f, normalized_energy - noise_energy);
+    const float normalized_level = 65535.0f * std::sqrt(
+        cleaned_energy * kSpectrumGain / kSpectrumReferenceEnergy);
     const float clamped_level = std::clamp(normalized_level, 0.0f, 65535.0f);
 
     return smooth_level(static_cast<uint16_t>(clamped_level), previous);
 }
 
-void execute_fft(std::array<float, kSpectrumWindowSamples>& real,
-                 std::array<float, kSpectrumWindowSamples>& imaginary) {
-    for (unsigned index = 1, reversed = 0;
-         index < kSpectrumWindowSamples;
-         ++index) {
-        unsigned bit = kSpectrumWindowSamples >> 1u;
-
-        while ((reversed & bit) != 0u) {
-            reversed ^= bit;
-            bit >>= 1u;
-        }
-
-        reversed ^= bit;
-
-        if (index < reversed) {
-            std::swap(real[index], real[reversed]);
-            std::swap(imaginary[index], imaginary[reversed]);
-        }
-    }
-
-    for (unsigned length = 2, stage = 0;
-         length <= kSpectrumWindowSamples;
-         length <<= 1u, ++stage) {
-        const ComplexCoefficient root = kStageTwiddles[stage];
-        const unsigned half_length = length >> 1u;
-
-        for (unsigned block = 0;
-             block < kSpectrumWindowSamples;
-             block += length) {
-            float twiddle_real = 1.0f;
-            float twiddle_imaginary = 0.0f;
-
-            for (unsigned offset = 0; offset < half_length; ++offset) {
-                const unsigned even_index = block + offset;
-                const unsigned odd_index = even_index + half_length;
-                const float transformed_real =
-                    twiddle_real * real[odd_index] -
-                    twiddle_imaginary * imaginary[odd_index];
-                const float transformed_imaginary =
-                    twiddle_real * imaginary[odd_index] +
-                    twiddle_imaginary * real[odd_index];
-                const float even_real = real[even_index];
-                const float even_imaginary = imaginary[even_index];
-
-                real[odd_index] = even_real - transformed_real;
-                imaginary[odd_index] = even_imaginary - transformed_imaginary;
-                real[even_index] = even_real + transformed_real;
-                imaginary[even_index] = even_imaginary + transformed_imaginary;
-
-                const float previous_twiddle_real = twiddle_real;
-                twiddle_real = previous_twiddle_real * root.real -
-                               twiddle_imaginary * root.imaginary;
-                twiddle_imaginary = previous_twiddle_real * root.imaginary +
-                                    twiddle_imaginary * root.real;
-            }
-        }
-    }
-}
-
-float normalized_bin_power(const std::array<float, kSpectrumWindowSamples>& real,
-                           const std::array<float, kSpectrumWindowSamples>& imaginary,
-                           uint16_t bin) {
-    return (real[bin] * real[bin] + imaginary[bin] * imaginary[bin]) *
-           kPositiveBinPowerScale;
-}
-
-float range_energy(const std::array<float, kSpectrumWindowSamples>& real,
-                   const std::array<float, kSpectrumWindowSamples>& imaginary,
-                   SpectrumBandRange range) {
-    float energy = 0.0f;
+uint64_t range_q15_energy(const spectrum_q15::Backend& backend,
+                          SpectrumBandRange range) {
+    uint64_t energy = 0;
 
     for (uint16_t bin = range.first; bin <= range.last; ++bin) {
-        energy += normalized_bin_power(real, imaginary, bin);
+        energy += backend.positive_bin_energy(bin);
     }
 
     return energy;
@@ -181,52 +88,33 @@ bool SpectrumAnalyzer::push(const CenteredMonoBlock& block, SpectrumFrame& outpu
         return false;
     }
 
-    int64_t sample_sum = 0;
+    q15_backend_.transform(samples_);
 
-    for (int16_t sample : samples_) {
-        sample_sum += sample;
-    }
-
-    const int32_t residual_mean = static_cast<int32_t>(
-        sample_sum / static_cast<int64_t>(kSpectrumWindowSamples));
-    float hann_phase_cosine = 1.0f;
-    float hann_phase_sine = 0.0f;
-
-    for (std::size_t index = 0; index < kSpectrumWindowSamples; ++index) {
-        const float hann = 0.5f - 0.5f * hann_phase_cosine;
-        const int32_t residual_centered =
-            static_cast<int32_t>(samples_[index]) - residual_mean;
-        real_[index] = static_cast<float>(residual_centered) * hann;
-        imaginary_[index] = 0.0f;
-
-        const float previous_phase_cosine = hann_phase_cosine;
-        hann_phase_cosine = previous_phase_cosine * kHannStepCosine -
-                            hann_phase_sine * kHannStepSine;
-        hann_phase_sine = previous_phase_cosine * kHannStepSine +
-                           hann_phase_sine * kHannStepCosine;
-    }
-
-    execute_fft(real_, imaginary_);
-
-    diagnostics_.positive_bin_energy = 0.0f;
-    diagnostics_.dominant_bin_power = 0.0f;
-    diagnostics_.dominant_bin = 0;
+    uint64_t total_q15_energy = 0;
+    uint64_t dominant_q15_energy = 0;
+    uint16_t dominant_bin = 0;
 
     for (uint16_t bin = 1; bin <= kSpectrumPositiveBinLimit; ++bin) {
-        const float power = normalized_bin_power(real_, imaginary_, bin);
-        diagnostics_.positive_bin_energy += power;
+        const uint64_t energy = q15_backend_.positive_bin_energy(bin);
+        total_q15_energy += energy;
 
-        if (power > diagnostics_.dominant_bin_power) {
-            diagnostics_.dominant_bin_power = power;
-            diagnostics_.dominant_bin = bin;
+        if (energy > dominant_q15_energy) {
+            dominant_q15_energy = energy;
+            dominant_bin = bin;
         }
     }
 
+    diagnostics_.positive_bin_energy =
+        static_cast<float>(total_q15_energy) / kHannPowerNormalization;
+    diagnostics_.dominant_bin_power =
+        static_cast<float>(dominant_q15_energy) / kHannPowerNormalization;
+    diagnostics_.dominant_bin = dominant_bin;
+
     for (std::size_t band = 0; band < kSpectrumBandRanges.size(); ++band) {
-        const float energy = range_energy(real_, imaginary_, kSpectrumBandRanges[band]);
-        output.bands[band] = convert_energy_to_level(
-            energy,
-            range_bin_count(kSpectrumBandRanges[band]),
+        const SpectrumBandRange range = kSpectrumBandRanges[band];
+        output.bands[band] = convert_q15_energy_to_level(
+            range_q15_energy(q15_backend_, range),
+            range_bin_count(range),
             smoothed_levels_[band]);
     }
 
@@ -235,20 +123,20 @@ bool SpectrumAnalyzer::push(const CenteredMonoBlock& block, SpectrumFrame& outpu
     constexpr SpectrumBandRange kMidRange{17, 80};
     constexpr SpectrumBandRange kHighRange{81, 384};
 
-    output.bass = convert_energy_to_level(
-        range_energy(real_, imaginary_, kBassRange),
+    output.bass = convert_q15_energy_to_level(
+        range_q15_energy(q15_backend_, kBassRange),
         range_bin_count(kBassRange),
         smoothed_levels_[32]);
-    output.low = convert_energy_to_level(
-        range_energy(real_, imaginary_, kLowRange),
+    output.low = convert_q15_energy_to_level(
+        range_q15_energy(q15_backend_, kLowRange),
         range_bin_count(kLowRange),
         smoothed_levels_[33]);
-    output.mid = convert_energy_to_level(
-        range_energy(real_, imaginary_, kMidRange),
+    output.mid = convert_q15_energy_to_level(
+        range_q15_energy(q15_backend_, kMidRange),
         range_bin_count(kMidRange),
         smoothed_levels_[34]);
-    output.high = convert_energy_to_level(
-        range_energy(real_, imaginary_, kHighRange),
+    output.high = convert_q15_energy_to_level(
+        range_q15_energy(q15_backend_, kHighRange),
         range_bin_count(kHighRange),
         smoothed_levels_[35]);
 

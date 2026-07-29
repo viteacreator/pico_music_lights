@@ -1,6 +1,7 @@
 #pragma once
 
 #include "audio/audio_processing.hpp"
+#include "audio/spectrum_q15_backend.hpp"
 
 #include <array>
 #include <cstddef>
@@ -55,8 +56,7 @@ public:
 
 private:
     std::array<int16_t, kSpectrumWindowSamples> samples_{};
-    std::array<float, kSpectrumWindowSamples> real_{};
-    std::array<float, kSpectrumWindowSamples> imaginary_{};
+    spectrum_q15::Backend q15_backend_{};
     std::array<uint16_t, kSpectrumBandCount + 4> smoothed_levels_{};
     SpectrumDiagnostics diagnostics_{};
     std::size_t sample_count_ = 0;

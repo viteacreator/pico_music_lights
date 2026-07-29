@@ -1,24 +1,25 @@
-# Feature 003 — Physical Validation Procedure
+# Feature 003.1 — Physical Validation Procedure
 
-1. Flash the Feature 003 UF2 and open USB serial at the configured USB CDC
-   connection. Confirm the banner says renderer default off.
-2. Leave audio inputs quiet and send `status`. Then send `noise measure` and
-   copy the final `Noise measurement:` line plus one preceding periodic
-   `audio #...` line.
-3. From quiet input, copy the highest reported `fft` and `max` values. Confirm
-   `adc_drop`, `over`, `under`, `windows`, and `missing` remain zero.
-4. Apply conditioned test tones at 80 Hz, 300 Hz, 1 kHz, then 6 kHz. For each,
-   copy one periodic line. Expected dominant macro order is Bass, Low, Mid,
-   High respectively; exact amplitudes are not yet acceptance tuning.
-5. When practical, apply a bin-centred/reference-like signal near 313 centered
-   ADC counts and copy its diagnostic line. State how its level was estimated.
-6. Play ordinary music and copy several periodic lines, especially any counter
-   changes or timing maximum.
-7. Send `renderer on`. Verify strip 1 spectrum direction, strip 2 mirrored
-   zones, strip 3 Bass/Mid/High, strip 4 centre-out Left/Right, strip 5 Mono,
-   and strip 6 Aux. Send `renderer off` and verify no new frames are requested.
-8. Send final `status` and copy it back with all tone/noise lines. Report any
-   nonzero drop, missing, overflow, or underflow value.
+1. Flash the UF2 and open USB CDC at any time after boot. The two retained
+   `DBG startup` lines must appear once after the terminal connects. Confirm
+   `audio=ok`, expected strip count, `backend=q15`, and automatic renderer state.
+2. With quiet conditioned inputs, copy at least five one-second `DBG t_ms=`
+   lines. Confirm `fft_us` is preferably ≤5,000 and comfortably below 8,000;
+   `adc_drop`, `missing_audio_blocks`, `dropped_windows`, `adc_over`, and
+   `adc_under` must not grow. The raw fields are normalized-power milli-units:
+   `raw_mean_milli` and `raw_max_milli`.
+3. Apply conditioned 80 Hz, 300 Hz, 1 kHz, and 6 kHz tones. Copy three lines
+   per tone. Verify Bass, Low, Mid, and High respectively dominate.
+4. When practical, apply the approximate 313-centred-count reference tone and
+   copy its lines. Also verify that a quiet input remains dark; do not change
+   floor, gain, reference energy, smoothing, or visual normalization merely to
+   compensate for low-level noise. Then test ordinary music.
+5. Verify automatic temporary rendering: Strip 1 spectrum, Strip 2 symmetric
+   zones, Strip 3 Bass/Mid/High, Strip 4 Left/Right, Strip 5 Mono, Strip 6 Aux.
+   Confirm moderate input is visible and quiet input is mostly dark.
+6. Leave the terminal connected but idle for several seconds. Copy telemetry
+   and report whether any continuity counter changes.
 
-Do not adjust provisional floor, gain, reference energy, attack, or release
-until these measurements are reviewed.
+Return the startup block and copied `DBG` lines for review. Do not tune floor,
+gain, reference energy, or visual-normalization constants without these
+measurements.

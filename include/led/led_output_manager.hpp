@@ -16,6 +16,7 @@ public:
     LedStrip* strip(std::size_t index);
     const LedStrip* strip(std::size_t index) const;
     std::size_t configured_pixel_count() const;
+    std::size_t usable_strip_count() const;
     LedStatus initialize_drivers();
     LedStatus start_show_one(std::size_t strip_index);
     LedStatus start_show_all_enabled();

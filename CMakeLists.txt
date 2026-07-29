@@ -40,6 +40,7 @@ add_executable(pico_music_lights
         src/audio/audio_capture.cpp
         src/audio/audio_processing.cpp
         src/audio/spectrum_analyzer.cpp
+        src/audio/spectrum_q15_backend.cpp
         src/audio/spectrum_resampler.cpp
         src/validation/led_public_api_compile.cpp
         src/led/rgbw_conversion.cpp
@@ -78,6 +79,13 @@ target_link_libraries(pico_music_lights
         hardware_pio
         hardware_adc
         
+        )
+
+# Bound USB CDC backpressure so one telemetry report cannot consume a material
+# fraction of the approximately 8 ms audio-block processing budget.
+target_compile_definitions(pico_music_lights PRIVATE
+        PICO_STDIO_USB_STDOUT_TIMEOUT_US=1000
+        CFG_TUD_CDC_TX_BUFSIZE=512
         )
 
 pico_add_extra_outputs(pico_music_lights)
