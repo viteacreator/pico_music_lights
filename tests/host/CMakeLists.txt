@@ -7,14 +7,35 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 enable_testing()
 
+function(configure_host_test target)
+    target_include_directories(${target} PRIVATE ../../include ../../src)
+
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    add_test(NAME ${target} COMMAND ${target})
+endfunction()
+
 add_executable(led_logic_tests
     led_logic_tests.cpp
     ../../src/led/rgbw_conversion.cpp
     ../../src/led/led_strip.cpp
     ../../src/led/led_output_conversion.cpp
+)
+configure_host_test(led_logic_tests)
+
+add_executable(audio_processing_tests
+    audio_processing_tests.cpp
     ../../src/audio/audio_processing.cpp
+)
+configure_host_test(audio_processing_tests)
+
+add_executable(spectrum_analysis_tests
+    spectrum_analysis_tests.cpp
     ../../src/audio/spectrum_analyzer.cpp
     ../../src/audio/spectrum_resampler.cpp
 )
-target_include_directories(led_logic_tests PRIVATE ../../include ../../src)
-add_test(NAME led_logic_tests COMMAND led_logic_tests)
+configure_host_test(spectrum_analysis_tests)

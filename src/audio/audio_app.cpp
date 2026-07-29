@@ -18,8 +18,10 @@ SpectrumAnalyzer g_spectrum_analyzer;
 SpectrumFrame g_spectrum_frame{};
 uint32_t g_maximum_analysis_us = 0;
 
-void print_diagnostics(const AudioLevelFrame& frame) {
-    std::printf("audio #%lu L %u R %u A %u M %u drop %lu over %lu under %lu\n",
+void print_diagnostics(const AudioLevelFrame& frame,
+                       const SpectrumFrame& spectrum) {
+    std::printf("audio #%lu L %u R %u A %u M %u adc_drop %lu over %lu under %lu "
+                "bass %u low %u mid %u high %u fft %luus max %luus windows %lu missing %lu\n",
                 static_cast<unsigned long>(frame.sequence),
                 frame.left,
                 frame.right,
@@ -27,7 +29,15 @@ void print_diagnostics(const AudioLevelFrame& frame) {
                 frame.mono,
                 static_cast<unsigned long>(frame.dropped_blocks),
                 static_cast<unsigned long>(audio_capture_fifo_errors()),
-                static_cast<unsigned long>(audio_capture_fifo_underflows()));
+                static_cast<unsigned long>(audio_capture_fifo_underflows()),
+                spectrum.bass,
+                spectrum.low,
+                spectrum.mid,
+                spectrum.high,
+                static_cast<unsigned long>(spectrum.analysis_time_us),
+                static_cast<unsigned long>(spectrum.maximum_analysis_time_us),
+                static_cast<unsigned long>(spectrum.dropped_windows),
+                static_cast<unsigned long>(spectrum.missing_audio_blocks));
 }
 
 }  // namespace
@@ -61,7 +71,7 @@ int main() {
             led_vu_update(&g_audio_frame);
             if (time_us_64() - last_diagnostic_us > kDiagnosticIntervalUs) {
                 last_diagnostic_us = time_us_64();
-                print_diagnostics(g_audio_frame);
+                print_diagnostics(g_audio_frame, g_spectrum_frame);
             }
         } else {
             led_vu_update(nullptr);

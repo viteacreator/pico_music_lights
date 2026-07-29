@@ -45,8 +45,12 @@ uint16_t process_channel(AudioProcessor& processor, const uint16_t* samples,
         raw_sum += sample;
         metrics.raw_min = std::min(metrics.raw_min, sample);
         metrics.raw_max = std::max(metrics.raw_max, sample);
-        metrics.clipping_low += sample == 0;
-        metrics.clipping_high += sample == kAdcMaximum;
+        if (sample == 0) {
+            ++metrics.clipping_low;
+        }
+        if (sample == kAdcMaximum) {
+            ++metrics.clipping_high;
+        }
     }
 
     const int32_t mean = static_cast<int32_t>(raw_sum / kAudioSamplesPerChannel);

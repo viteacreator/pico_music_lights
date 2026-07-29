@@ -31,7 +31,7 @@ Feature 002 publishes one hardware-independent `CenteredMonoBlock` per
 processed block: `std::array<int16_t, 256> samples` plus its sequence. The
 `AudioProcessor` owns the caller-provided output while forming the same
 independently DC-centered L/R samples used for level metrics. The application
-owns the block until `SpectrumAnalyzer::push_block()` copies it into its static
+owns the block until `SpectrumAnalyzer::push()` copies it into its static
 window; the source may then be reused. Feature 003 never estimates or removes
 DC again, and opposite-polarity cancellation is therefore retained.
 
@@ -54,7 +54,7 @@ For each inclusive bin range, use accumulated normalized energy
 `E = sum(power[i])`. Use centralized provisional constants:
 `noise_floor_per_bin`, `gain`, `reference_energy`, `attack`, and `release`.
 Compute `clean_E = max(0, E - noise_floor_per_bin * bin_count)`, then
-`level = clamp(65535 * sqrt(clean_E * gain) / reference_energy, 0, 65535)`.
+`level = clamp(65535 * sqrt(clean_E * gain / reference_energy), 0, 65535)`.
 `noise_floor_per_bin` is normalized FFT-power units, `gain` is dimensionless,
 and `reference_energy` is normalized-energy units. Smooth each independent output with
 `previous + attack*(level-previous)` while rising, otherwise

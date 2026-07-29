@@ -12,11 +12,13 @@ constexpr float kFftLengthSquared =
 constexpr float kPositiveBinPowerScale =
     2.0f / (kFftLengthSquared * kHannPowerNormalization);
 
-// These are provisional spectrum-level conversion constants. They keep a
-// full-scale, bin-centred sine wave below saturation while physical testing
-// selects the final gain and noise-floor values.
-constexpr float kNoiseFloorPerBin = 0.0f;
+// This provisional floor suppresses residual ADC and floating-point noise.
+// It is measured in normalized single-bin FFT-power units and requires
+// physical noise measurements before final tuning.
+constexpr float kNoiseFloorPerBin = 1.0f;
 constexpr float kSpectrumGain = 1.0f;
+// A bin-centred sine with approximately 313 centered ADC counts amplitude
+// produces this normalized energy after the Hann/FFT normalization.
 constexpr float kReferenceEnergy = 32768.0f;
 constexpr float kHannStepCosine = 0.9999811384617630f;
 constexpr float kHannStepSine = 0.0061418825059791f;
@@ -155,6 +157,9 @@ uint16_t range_bin_count(SpectrumBandRange range) {
 
 bool SpectrumAnalyzer::push(const CenteredMonoBlock& block, SpectrumFrame& output) {
     if (have_input_sequence_ && block.sequence != last_input_sequence_ + 1u) {
+        if (block.sequence > last_input_sequence_ + 1u) {
+            missing_audio_blocks_ += block.sequence - last_input_sequence_ - 1u;
+        }
         if (sample_count_ != 0) {
             ++dropped_windows_;
         }
@@ -175,12 +180,22 @@ bool SpectrumAnalyzer::push(const CenteredMonoBlock& block, SpectrumFrame& outpu
         return false;
     }
 
+    int64_t sample_sum = 0;
+
+    for (int16_t sample : samples_) {
+        sample_sum += sample;
+    }
+
+    const int32_t residual_mean = static_cast<int32_t>(
+        sample_sum / static_cast<int64_t>(kSpectrumWindowSamples));
     float hann_phase_cosine = 1.0f;
     float hann_phase_sine = 0.0f;
 
     for (std::size_t index = 0; index < kSpectrumWindowSamples; ++index) {
         const float hann = 0.5f - 0.5f * hann_phase_cosine;
-        real_[index] = static_cast<float>(samples_[index]) * hann;
+        const int32_t residual_centered =
+            static_cast<int32_t>(samples_[index]) - residual_mean;
+        real_[index] = static_cast<float>(residual_centered) * hann;
         imaginary_[index] = 0.0f;
 
         const float previous_phase_cosine = hann_phase_cosine;
@@ -224,8 +239,8 @@ bool SpectrumAnalyzer::push(const CenteredMonoBlock& block, SpectrumFrame& outpu
 
     output.sequence = block.sequence;
     output.analysis_time_us = 0;
-    output.maximum_analysis_time_us = maximum_analysis_time_us_;
     output.dropped_windows = dropped_windows_;
+    output.missing_audio_blocks = missing_audio_blocks_;
 
     std::copy(samples_.begin() + (kSpectrumWindowSamples / 2u),
               samples_.end(),

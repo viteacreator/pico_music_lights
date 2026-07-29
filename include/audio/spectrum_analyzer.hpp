@@ -34,6 +34,7 @@ struct SpectrumFrame {
     uint32_t analysis_time_us = 0;
     uint32_t maximum_analysis_time_us = 0;
     uint32_t dropped_windows = 0;
+    uint32_t missing_audio_blocks = 0;
 };
 
 class SpectrumAnalyzer {
@@ -47,7 +48,7 @@ private:
     std::array<uint16_t, kSpectrumBandCount + 4> smoothed_levels_{};
     std::size_t sample_count_ = 0;
     uint32_t last_input_sequence_ = 0;
-    uint32_t maximum_analysis_time_us_ = 0;
     uint32_t dropped_windows_ = 0;
+    uint32_t missing_audio_blocks_ = 0;
     bool have_input_sequence_ = false;
 };

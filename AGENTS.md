@@ -6,3 +6,6 @@
 - Use subagents only for independent responsibilities. The primary agent owns
   integration, complete review, firmware build, and host-test run.
 - Do not claim physical verification unless the project owner reports it.
+- Prefer small, focused, low-risk changes; avoid broad refactoring unless required.
+- Confirm a change is still necessary before editing, preserve tested behaviour,
+  review the complete final diff, and remove unrelated/generated changes.
