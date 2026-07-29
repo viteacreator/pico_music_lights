@@ -15,9 +15,10 @@
   scheduling.
 - [x] Add nonblocking USB commands, status counters, and a three-second quiet
   input measurement mode.
-- [x] Build the Pico W firmware, inspect all host-test target dependencies, and
-  syntax-check each host target with the available C++ compiler. Native CTest
-  execution for the new renderer target remains pending a native toolchain.
+- [x] Independently configure, compile, and execute all warning-enabled native
+  host targets with zero warnings: `led_logic_tests`,
+  `audio_processing_tests`, `spectrum_analysis_tests`, and
+  `diagnostic_renderer_tests` all passed.
 - [ ] Perform owner-led physical validation: quiet noise capture, timing,
   80/300/1000/6000 Hz tones, reference tone where practical, music, six-strip
   mapping, and continuity counters.

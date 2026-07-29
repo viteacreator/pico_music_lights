@@ -93,6 +93,10 @@ noise measure | noise cancel
 help
 ```
 
+The command line buffer has a fixed maximum length. An overlong line produces
+exactly one rejection, then every remaining character of that same line is
+discarded until CR or LF. Its tail cannot be interpreted as another command.
+
 `noise measure` collects 192 valid FFT windows (about three seconds), skips
 windows affected by missing blocks or dropped analysis windows, restarts its
 consecutive collection after such a discontinuity, and reports mean raw bin

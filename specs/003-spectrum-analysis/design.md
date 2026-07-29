@@ -28,8 +28,9 @@ buffers 3,072 B, and Feature 001 logical plus packed LED pools 6,400 B, plus
 manager/application objects and SDK state. Constant FFT roots reside in flash.
 Temporary renderer stack use is small fixed segment arrays (16 + 5 `uint16_t`)
 and no heap allocation is permitted in capture, analysis, commands, or render.
-The current Release Pico W link reports 17,640 B BSS; the final firmware map
-remains the authority for total BSS and stack headroom.
+The current ELF map reports `.bss` as `0x4428` (17,448 bytes). The firmware
+map remains the authoritative value for total BSS and stack headroom, and this
+number can change as future features are added.
 
 ## Renderer geometry
 
@@ -61,6 +62,8 @@ LED DMA. The renderer default is disabled; `renderer on` enables frame
 generation only, and `renderer off` leaves the last transmitted frame latched.
 
 The command parser consumes USB bytes with a zero-timeout read into a fixed
-48-byte line buffer. It makes no interrupt calls, alters no ADC/DMA ownership,
-and has no persistent state. Statistics reset is implemented as an application
-baseline plus resettable renderer frame counters.
+48-byte line buffer. An overlong line emits one rejection and enters a discard
+state until CR or LF, so no trailing fragment can be parsed as a command. It
+makes no interrupt calls, alters no ADC/DMA ownership, and has no persistent
+state. Statistics reset is implemented as an application baseline plus
+resettable renderer frame counters.
