@@ -2,7 +2,7 @@
 
 1. Add public spectrum types and centralized constants; compile them in firmware and host tests.
 2. Add the `CenteredMonoBlock` handoff from Feature 002; test ownership, sequence, and opposite-phase cancellation.
-3. Add static window accumulation, 50% overlap, and precomputed Hann support; host-test accumulation and overlap.
+3. Add static window accumulation, 50% overlap, and Hann window generation and application; host-test accumulation and overlap.
 4. Add and test the isolated FFT backend with bin-to-frequency and individual tones.
 5. Add Hann/FFT-normalized positive-bin power; test amplitude repeatability and DC exclusion.
 6. Add direct Bass/Low/Mid/High aggregation from normalized bins; test exact macro ranges.

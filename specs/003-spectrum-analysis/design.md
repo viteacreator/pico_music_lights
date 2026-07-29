@@ -17,20 +17,21 @@ is shared with DMA. A sliding copy retains samples 512–1023 after a completed
 transform. If a complete next window arrives while analysis is still busy, it
 is skipped and `dropped_windows` increments.
 
-Estimated static SRAM: analyzer mono window 2,048 B; one published
-`CenteredMonoBlock` 512 B; FFT real 4,096 B; FFT imaginary 4,096 B; 385 powers
-1,540 B; raw/smoothed display and macro state under 300 B; 32-element temporary
-resampling output 64 B: about 12.4 KiB plus the caller-owned block. Constant
-flash tables: Hann 4,096 B, 512 complex twiddles 4,096 B, and 1,024-entry
-bit-reversal table 2,048 B, about 10.0 KiB. Tables are `const` and reside in
-flash; this avoids SRAM use but flash reads are part of FFT timing. Temporary
-stack use is limited to scalar locals (under 256 B); no transform array is on
-the stack. Precomputed twiddles avoid per-window sine/cosine work.
+`SpectrumAnalyzer` is approximately 10.3 KiB static SRAM: 1,024 mono samples
+(2,048 B), real and imaginary float work arrays (8,192 B), and state. The
+published `CenteredMonoBlock` is 512 B and application-owned. There is no
+separate power array. Constant flash storage is ten radix-2 stage roots
+(approximately 80 B). Hann is generated per window through a phase recurrence;
+twiddles are generated per stage through complex multiplication; bit reversal
+is algorithmic. This recurrence implementation is provisional until Pico timing
+is physically measured. Transform arrays are static, so stack use is scalar
+locals only.
 
 ## Exact 32-band mapping
 
-Bin spacing is 31.25 Hz. Ranges are inclusive, contiguous, and normalized by
-their bin counts. The table is a compile-time constant.
+Bin spacing is 31.25 Hz. Ranges are inclusive and contiguous. Bin energies are
+accumulated; noise-floor subtraction scales with bin count, and output energy
+is not averaged by band width. The table is a compile-time constant.
 
 |Band|Bins|Hz approx.|Band|Bins|Hz approx.|
 |---:|---:|---:|---:|---:|---:|
@@ -53,7 +54,9 @@ their bin counts. The table is a compile-time constant.
 
 ## State, compression, and diagnostics
 
-`hann_power_normalization` is the precomputed mean squared Hann coefficient.
+`hann_power_normalization` is the fixed mean squared value for the selected
+Hann definition. Before Hann, the analyzer subtracts the arithmetic mean of
+the completed window to suppress residual DC leakage into Bass bins.
 Power uses `2*(real²+imaginary²)/(1024²*hann_power_normalization)` before all
 aggregation. Bands use accumulated energy `sum(power)` and subtract
 `noise_floor_per_bin * bin_count`, not mean power; this prevents equal tones in

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 
 namespace {
 
@@ -34,6 +35,22 @@ CenteredMonoBlock make_constant_block(uint32_t sequence, int16_t value) {
     return block;
 }
 
+CenteredMonoBlock make_frequency_block(float frequency_hz,
+                                      uint32_t block_number,
+                                      int16_t amplitude = 64) {
+    CenteredMonoBlock block{};
+    block.sequence = block_number;
+
+    for (std::size_t sample = 0; sample < kAudioSamplesPerChannel; ++sample) {
+        const std::size_t absolute_sample = block_number * kAudioSamplesPerChannel + sample;
+        const float angle = 2.0f * kPi * frequency_hz *
+                            static_cast<float>(absolute_sample) / kSampleRateHz;
+        block.samples[sample] = static_cast<int16_t>(amplitude * std::sin(angle));
+    }
+
+    return block;
+}
+
 bool push_window(SpectrumAnalyzer& analyzer,
                  uint32_t fft_bin,
                  uint32_t first_sequence,
@@ -47,6 +64,17 @@ bool push_window(SpectrumAnalyzer& analyzer,
             frame);
     }
 
+    return ready;
+}
+
+bool push_frequency_window(SpectrumAnalyzer& analyzer,
+                           float frequency_hz,
+                           SpectrumFrame& frame,
+                           int16_t amplitude = 64) {
+    bool ready = false;
+    for (uint32_t block = 0; block < 4; ++block) {
+        ready = analyzer.push(make_frequency_block(frequency_hz, block, amplitude), frame);
+    }
     return ready;
 }
 
@@ -116,7 +144,55 @@ bool test_hann_endpoints_and_dc_rejection() {
         (void)dc_analyzer.push(make_constant_block(block, 500), dc_frame);
     }
 
-    return maximum_band(dc_frame) == 0 && dc_frame.bass == 0 && dc_frame.low == 0;
+    SpectrumAnalyzer centre_analyzer{};
+    SpectrumFrame centre_frame{};
+    CenteredMonoBlock centre{};
+    for (uint32_t block = 0; block < 4; ++block) {
+        centre.sequence = block;
+        if (block == 2) {
+            centre.samples[0] = 1000;
+        }
+        (void)centre_analyzer.push(centre, centre_frame);
+        centre.samples.fill(0);
+    }
+
+    return maximum_band(dc_frame) == 0 && dc_frame.bass == 0 && dc_frame.low == 0 &&
+           maximum_band(centre_frame) > 0;
+}
+
+bool test_noise_floor_and_reference_level() {
+    SpectrumFrame below{};
+    SpectrumFrame above{};
+    SpectrumFrame reference{};
+    SpectrumAnalyzer below_analyzer{};
+    SpectrumAnalyzer above_analyzer{};
+    SpectrumAnalyzer reference_analyzer{};
+
+    if (!push_window(below_analyzer, 32, 0, below, 4) ||
+        !push_window(above_analyzer, 32, 0, above, 8) ||
+        !push_window(reference_analyzer, 32, 0, reference, 313)) {
+        return false;
+    }
+
+    const uint16_t reference_first_frame = maximum_band(reference);
+    return maximum_band(below) == 0 && maximum_band(above) > 0 &&
+           reference_first_frame >= 30000 && reference_first_frame <= 34000;
+}
+
+bool test_requested_frequency_hz_classification() {
+    SpectrumAnalyzer bass_analyzer{};
+    SpectrumAnalyzer low_analyzer{};
+    SpectrumAnalyzer mid_analyzer{};
+    SpectrumAnalyzer high_analyzer{};
+    SpectrumFrame bass{};
+    SpectrumFrame low{};
+    SpectrumFrame mid{};
+    SpectrumFrame high{};
+
+    return push_frequency_window(bass_analyzer, 80.0f, bass) && bass.bass > bass.low &&
+           push_frequency_window(low_analyzer, 300.0f, low) && low.low > low.bass && low.low > low.mid &&
+           push_frequency_window(mid_analyzer, 1000.0f, mid) && mid.mid > mid.low && mid.mid > mid.high &&
+           push_frequency_window(high_analyzer, 6000.0f, high) && high.high > high.mid;
 }
 
 bool test_frequency_classification() {
@@ -238,14 +314,26 @@ bool test_resampling() {
 }  // namespace
 
 int main() {
-    return test_mapping_is_complete() &&
-                   test_window_timing_and_overlap() &&
-                   test_hann_endpoints_and_dc_rejection() &&
-                   test_frequency_classification() &&
-                   test_mixed_tones_and_monotonic_amplitude() &&
-                   test_equal_amplitude_low_middle_high_response() &&
-                   test_smoothing_noise_floor_and_macro_ranges() &&
-                   test_sequence_discontinuity() && test_resampling()
-               ? 0
-               : 1;
+    struct NamedTest { const char* name; bool (*run)(); };
+    const std::array<NamedTest, 11> tests{{
+        {"mapping", test_mapping_is_complete},
+        {"window_overlap", test_window_timing_and_overlap},
+        {"hann_dc", test_hann_endpoints_and_dc_rejection},
+        {"noise_floor_reference", test_noise_floor_and_reference_level},
+        {"bin_frequency_classification", test_frequency_classification},
+        {"hz_frequency_classification", test_requested_frequency_hz_classification},
+        {"mixed_monotonic", test_mixed_tones_and_monotonic_amplitude},
+        {"equal_amplitude", test_equal_amplitude_low_middle_high_response},
+        {"smoothing_macro", test_smoothing_noise_floor_and_macro_ranges},
+        {"sequence_gap", test_sequence_discontinuity},
+        {"resampling", test_resampling},
+    }};
+
+    for (const NamedTest& test : tests) {
+        if (!test.run()) {
+            std::fprintf(stderr, "Failed spectrum subtest: %s\n", test.name);
+            return 1;
+        }
+    }
+    return 0;
 }

@@ -12,7 +12,8 @@ constexpr size_t kSpectrumBandCount = 32;
 struct SpectrumFrame {
     std::array<uint16_t, kSpectrumBandCount> bands;
     uint16_t bass, low, mid, high;
-    uint32_t sequence, analysis_time_us, maximum_analysis_time_us, dropped_windows;
+    uint32_t sequence, analysis_time_us, maximum_analysis_time_us;
+    uint32_t dropped_windows, missing_audio_blocks;
 };
 ```
 
@@ -32,17 +33,20 @@ processed block: `std::array<int16_t, 256> samples` plus its sequence. The
 `AudioProcessor` owns the caller-provided output while forming the same
 independently DC-centered L/R samples used for level metrics. The application
 owns the block until `SpectrumAnalyzer::push()` copies it into its static
-window; the source may then be reused. Feature 003 never estimates or removes
-DC again, and opposite-polarity cancellation is therefore retained.
+window; the source may then be reused. Feature 002 owns adaptive physical ADC
+DC estimation. Feature 003 additionally subtracts only the arithmetic mean of
+each completed 1,024-sample FFT window before Hann; it is not a second adaptive
+estimator and preserves opposite-polarity cancellation.
 
-Apply precomputed Hann coefficients, execute exactly one 1,024-point real FFT,
+Generate Hann coefficients per window using the documented phase recurrence,
+execute exactly one 1,024-point real FFT,
 ignore DC bin 0 and bins above 384 (12 kHz), calculate power, then derive every
-display and macro value from that same power array.
+display and macro value from that same direct normalized-bin aggregation.
 
 With `N = 1024` and `H = mean(hann[i]^2)`, each useful positive-frequency bin
 uses `power[k] = 2 * (real[k]^2 + imaginary[k]^2) / (N^2 * H)`. DC and Nyquist
-are not doubled; DC is excluded. Every display and macro band uses the mean of
-these normalized powers. Noise floor and reference power use these normalized
+are not doubled; DC is excluded. Every display and macro band uses accumulated
+normalized energy. Noise floor and reference power use these normalized
 power units; gain is dimensionless.
 
 Macro ranges are exact: Bass 1–5 (31.25–156.25 Hz), Low 6–16 (>156.25–500 Hz),
