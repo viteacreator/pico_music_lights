@@ -15,11 +15,8 @@ constexpr float kPositiveBinPowerScale =
 // This provisional floor suppresses residual ADC and floating-point noise.
 // It is measured in normalized single-bin FFT-power units and requires
 // physical noise measurements before final tuning.
-constexpr float kNoiseFloorPerBin = 1.0f;
-constexpr float kSpectrumGain = 1.0f;
 // A bin-centred sine with approximately 313 centered ADC counts amplitude
 // produces this normalized energy after the Hann/FFT normalization.
-constexpr float kReferenceEnergy = 32768.0f;
 constexpr float kHannStepCosine = 0.9999811384617630f;
 constexpr float kHannStepSine = 0.0061418825059791f;
 
@@ -60,10 +57,10 @@ uint16_t convert_energy_to_level(float energy,
                                  uint16_t bin_count,
                                  uint16_t& previous) {
     const float noise_energy =
-        kNoiseFloorPerBin * static_cast<float>(bin_count);
+        kSpectrumNoiseFloorPerBin * static_cast<float>(bin_count);
     const float cleaned_energy = std::max(0.0f, energy - noise_energy);
     const float normalized_energy =
-        cleaned_energy * kSpectrumGain / kReferenceEnergy;
+        cleaned_energy * kSpectrumGain / kSpectrumReferenceEnergy;
     const float normalized_level =
         65535.0f * std::sqrt(normalized_energy);
     const float clamped_level = std::clamp(normalized_level, 0.0f, 65535.0f);
@@ -155,6 +152,10 @@ uint16_t range_bin_count(SpectrumBandRange range) {
 
 }  // namespace
 
+const SpectrumDiagnostics& SpectrumAnalyzer::diagnostics() const {
+    return diagnostics_;
+}
+
 bool SpectrumAnalyzer::push(const CenteredMonoBlock& block, SpectrumFrame& output) {
     if (have_input_sequence_ && block.sequence != last_input_sequence_ + 1u) {
         if (block.sequence > last_input_sequence_ + 1u) {
@@ -206,6 +207,20 @@ bool SpectrumAnalyzer::push(const CenteredMonoBlock& block, SpectrumFrame& outpu
     }
 
     execute_fft(real_, imaginary_);
+
+    diagnostics_.positive_bin_energy = 0.0f;
+    diagnostics_.dominant_bin_power = 0.0f;
+    diagnostics_.dominant_bin = 0;
+
+    for (uint16_t bin = 1; bin <= kSpectrumPositiveBinLimit; ++bin) {
+        const float power = normalized_bin_power(real_, imaginary_, bin);
+        diagnostics_.positive_bin_energy += power;
+
+        if (power > diagnostics_.dominant_bin_power) {
+            diagnostics_.dominant_bin_power = power;
+            diagnostics_.dominant_bin = bin;
+        }
+    }
 
     for (std::size_t band = 0; band < kSpectrumBandRanges.size(); ++band) {
         const float energy = range_energy(real_, imaginary_, kSpectrumBandRanges[band]);

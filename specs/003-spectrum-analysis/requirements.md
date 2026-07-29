@@ -1,91 +1,103 @@
-# Feature 003 — Spectrum Analysis Bring-Up
+# Feature 003 — Spectrum Analysis Physical Validation and Diagnostic Rendering
 
-## Scope and public contract
+## Scope
 
-The hardware-independent analyzer consumes only centered sample-wise mono:
-`(left_centered + right_centered) / 2`. It never accesses ADC, DMA, PIO, GPIO,
-LED buffers, Wi-Fi, or storage. Aux is excluded. Feature 002 retains Left,
-Right, Aux, and full-range Mono envelopes; Feature 003 does not duplicate them.
+Feature 003 consumes the single shared, read-only `CenteredMonoBlock` produced
+by Feature 002. It performs one 1,024-sample FFT per analysis window and
+publishes one shared `SpectrumFrame`; diagnostic views do not run independent
+FFTs. Aux remains excluded from this FFT. This stage adds physical validation,
+raw power diagnostics, a temporary six-strip diagnostic scene, and nonblocking
+USB commands. It does not add an Effect Engine, AGC, beat detection, storage,
+Wi-Fi, or web configuration.
 
-```cpp
-constexpr size_t kSpectrumBandCount = 32;
-struct SpectrumFrame {
-    std::array<uint16_t, kSpectrumBandCount> bands;
-    uint16_t bass, low, mid, high;
-    uint32_t sequence, analysis_time_us, maximum_analysis_time_us;
-    uint32_t dropped_windows, missing_audio_blocks;
-};
+`SpectrumFrame` contains 32 display bands, Bass/Low/Mid/High, sequence,
+analysis timing, dropped-window count, and missing-audio-block count. All
+levels are unsigned 0–65535. `SpectrumDiagnostics` contains raw normalized
+positive-bin energy, the highest raw bin power, and its bin number. These raw
+values are derived from the same completed FFT before floor subtraction,
+gain, level conversion, or smoothing.
+
+## FFT contract
+
+Four 256-sample blocks at 32 kHz form the first 1,024-sample window. The next
+window retains 512 samples and accepts two further blocks, giving 50% overlap
+and roughly a 16 ms output cadence. Feature 002 owns adaptive ADC DC removal;
+Feature 003 removes only the arithmetic mean of each completed FFT window
+before applying Hann. It therefore does not repeat adaptive DC estimation.
+
+For useful bins 1–384 (31.25 Hz–12 kHz), with `N = 1024` and
+`H = mean(hann²)`, normalized positive-bin power is:
+
+```text
+power[k] = 2 × (real[k]² + imaginary[k]²) / (N² × H)
 ```
 
-All public spectrum levels are saturated unsigned 16-bit values in 0–65535.
+Band and macro energy is accumulated, never averaged by band width:
 
-## Window and transform requirements
+```text
+E = sum(power[k])
+clean_E = max(0, E - noise_floor_per_bin × bin_count)
+level = clamp(65535 × sqrt(clean_E × gain / reference_energy), 0, 65535)
+```
 
-Input arrives in centered 256-sample mono blocks at 32,000 Hz. Four blocks
-form the initial 1,024-sample window. After analysis, the newest 512 samples
-are retained and two further blocks produce the next window; output cadence is
-approximately 16 ms. Static analyzer-owned storage is used; no heap allocation
-is permitted. If an analysis cannot begin before a subsequent complete window
-is available, that subsequent window is discarded and `dropped_windows` rises.
+The provisional constants remain unchanged: floor `1.0` normalized power per
+bin, gain `1.0`, reference energy `32768`, attack `1/2`, and release `1/16`.
+The reference is a bin-centred sine of approximately 313 centered ADC counts;
+its first attack-smoothed result is about 32767. Hardware measurements, not
+visual preference, determine future tuning.
 
-Feature 002 publishes one hardware-independent `CenteredMonoBlock` per
-processed block: `std::array<int16_t, 256> samples` plus its sequence. The
-`AudioProcessor` owns the caller-provided output while forming the same
-independently DC-centered L/R samples used for level metrics. The application
-owns the block until `SpectrumAnalyzer::push()` copies it into its static
-window; the source may then be reused. Feature 002 owns adaptive physical ADC
-DC estimation. Feature 003 additionally subtracts only the arithmetic mean of
-each completed 1,024-sample FFT window before Hann; it is not a second adaptive
-estimator and preserves opposite-polarity cancellation.
+## Diagnostic renderer
 
-Generate Hann coefficients per window using the documented phase recurrence,
-execute exactly one 1,024-point real FFT,
-ignore DC bin 0 and bins above 384 (12 kHz), calculate power, then derive every
-display and macro value from that same direct normalized-bin aggregation.
+The renderer is a temporary scene and defaults **off**. Enabling it configures
+the existing six tested GRBW SK6812 RGBW outputs at brightness 16 and no more
+than 60 frames/s. It uses only the public LED manager logical-pixel API and
+skips an update while LED packing, transmission, or latching is active.
 
-With `N = 1024` and `H = mean(hann[i]^2)`, each useful positive-frequency bin
-uses `power[k] = 2 * (real[k]^2 + imaginary[k]^2) / (N^2 * H)`. DC and Nyquist
-are not doubled; DC is excluded. Every display and macro band uses accumulated
-normalized energy. Noise floor and reference power use these normalized
-power units; gain is dimensionless.
+The fixed scene is temporary only:
 
-Macro ranges are exact: Bass 1–5 (31.25–156.25 Hz), Low 6–16 (>156.25–500 Hz),
-Mid 17–80 (>500–2,500 Hz), High 81–384 (>2,500–12,000 Hz).
+1. Strip 1: 32 bands resampled to 16 contiguous low-to-high spectrum regions,
+   with a blue/white → cyan/green → red diagnostic gradient.
+2. Strip 2: five weighted-resampled frequency values mirrored about the
+   centre; the outside pair is the lowest zone and the centre is the highest.
+3. Strip 3: contiguous Bass, Mid, High zones. For non-divisible lengths,
+   pixel `i` belongs to `floor(3i / length)`.
+4. Strip 4: Feature 002 Left/Right envelopes, centre-out. For odd lengths the
+   centre pixel belongs to Left and Right begins one pixel to its right.
+5. Strip 5: Feature 002 Mono full-range VU.
+6. Strip 6: Feature 002 Aux full-range VU.
 
-## Processing requirements
+Rendering primitives accept an explicit caller-owned logical pixel span and
+have no GPIO, PIO, DMA, ADC, or FFT-work-buffer knowledge. Their state is not
+globally shared. This preserves the future architecture: each of six strips
+may independently choose effect, source, colours, parameters, direction,
+geometry, and enabled state, while all consume the same read-only audio and
+spectrum frames.
 
-For each inclusive bin range, use accumulated normalized energy
-`E = sum(power[i])`. Use centralized provisional constants:
-`noise_floor_per_bin`, `gain`, `reference_energy`, `attack`, and `release`.
-Compute `clean_E = max(0, E - noise_floor_per_bin * bin_count)`, then
-`level = clamp(65535 * sqrt(clean_E * gain / reference_energy), 0, 65535)`.
-`noise_floor_per_bin` is normalized FFT-power units, `gain` is dimensionless,
-and `reference_energy` is normalized-energy units. Smooth each independent output with
-`previous + attack*(level-previous)` while rising, otherwise
-`previous + release*(level-previous)`. Fixed-point equivalents may replace
-these formulas only if they retain the same contract.
+## USB validation controls
 
-## Resampler and diagnostic renderer
+Commands are line-based, nonblocking, volatile, and processed only in the
+normal loop:
 
-The pure resampler accepts caller-provided storage and maps 32 bands to 5, 8,
-16, or 32 segments using weighted source-band overlap, so every source band
-contributes even when counts do not divide evenly. It knows no strip geometry.
+```text
+status
+stats reset
+diagnostics on | diagnostics off
+renderer on | renderer off
+noise measure | noise cancel
+help
+```
 
-The separate diagnostic renderer uses public audio, spectrum, and LED APIs:
-Strip 1 is a 16-segment spectrum; Strip 2 is five symmetric frequency zones;
-Strip 3 is Bass/Mid/High zones; Strip 4 is centre-out L/R VU; Strip 5 is Mono
-VU; Strip 6 is Aux VU. It retains GRBW, brightness 16, installed lengths, and
-at most about 60 updates/s.
+`noise measure` collects 192 valid FFT windows (about three seconds), skips
+windows affected by missing blocks or dropped analysis windows, restarts its
+consecutive collection after such a discontinuity, and reports mean raw bin
+power, average and worst raw maximum-bin power, and dominant noise region. It
+never modifies DSP constants.
 
-## Verification
+## Acceptance and remaining physical validation
 
-Host tests cover window/overlap/Hann behaviour, mapping validity, DC rejection,
-tones at 80/300/1000/6000 Hz, mixed tones, monotonic amplitude, opposite-phase
-mono cancellation, floor/gain/smoothing, macro aggregation, resampling, and
-sequence/drop accounting. The complete 32-band table is tested for exactly one
-owner for every bin 1–384, no empty range, no overlap, and no omission. Physical testing confirms timing and diagnostic
-response with tones and music.
-
-Equal-amplitude bin-centred tones in low, middle, and high display regions are
-also tested: dominant levels must remain reasonably comparable within a
-documented tolerance rather than falling merely because a higher band is wider.
+Software must build firmware and host-test pure geometry. Physical acceptance
+still requires quiet-input measurements, 80/300/1000/6000 Hz tone checks,
+reference-level evidence when practical, music, all six views, and zero normal
+drop/missing/overflow/underflow counters. Preferred FFT duration is ≤8 ms;
+hard maximum is <16 ms. No physical Feature 003 timing, noise, or tone result
+is claimed until the project owner supplies measurements.

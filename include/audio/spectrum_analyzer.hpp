@@ -9,6 +9,9 @@
 constexpr std::size_t kSpectrumBandCount = 32;
 constexpr std::size_t kSpectrumWindowSamples = 1024;
 constexpr std::size_t kSpectrumPositiveBinLimit = 384;
+constexpr float kSpectrumNoiseFloorPerBin = 1.0f;
+constexpr float kSpectrumGain = 1.0f;
+constexpr float kSpectrumReferenceEnergy = 32768.0f;
 
 struct SpectrumBandRange {
     uint16_t first;
@@ -37,15 +40,25 @@ struct SpectrumFrame {
     uint32_t missing_audio_blocks = 0;
 };
 
+// Raw normalized FFT information before noise-floor subtraction, gain,
+// level conversion, or smoothing. This is intended for diagnostics only.
+struct SpectrumDiagnostics {
+    float positive_bin_energy = 0.0f;
+    float dominant_bin_power = 0.0f;
+    uint16_t dominant_bin = 0;
+};
+
 class SpectrumAnalyzer {
 public:
     bool push(const CenteredMonoBlock& block, SpectrumFrame& output);
+    const SpectrumDiagnostics& diagnostics() const;
 
 private:
     std::array<int16_t, kSpectrumWindowSamples> samples_{};
     std::array<float, kSpectrumWindowSamples> real_{};
     std::array<float, kSpectrumWindowSamples> imaginary_{};
     std::array<uint16_t, kSpectrumBandCount + 4> smoothed_levels_{};
+    SpectrumDiagnostics diagnostics_{};
     std::size_t sample_count_ = 0;
     uint32_t last_input_sequence_ = 0;
     uint32_t dropped_windows_ = 0;

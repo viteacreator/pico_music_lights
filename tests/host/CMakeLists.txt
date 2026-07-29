@@ -39,3 +39,10 @@ add_executable(spectrum_analysis_tests
     ../../src/audio/spectrum_resampler.cpp
 )
 configure_host_test(spectrum_analysis_tests)
+
+add_executable(diagnostic_renderer_tests
+    diagnostic_renderer_tests.cpp
+    ../../src/led/diagnostic_rendering.cpp
+    ../../src/audio/spectrum_resampler.cpp
+)
+configure_host_test(diagnostic_renderer_tests)

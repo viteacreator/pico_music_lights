@@ -47,7 +47,8 @@ add_executable(pico_music_lights
         src/led/led_output_conversion.cpp
         src/led/led_output_manager.cpp
         src/led/sk6812_rgbw_driver.cpp
-        src/led/hardware_bringup.cpp
+        src/led/diagnostic_rendering.cpp
+        src/led/diagnostic_renderer.cpp
         )
 
 pico_set_program_name(pico_music_lights "pico_music_lights")
