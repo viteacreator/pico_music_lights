@@ -1,3 +1,38 @@
-build
-!.vscode/*
+# All root CMake build directories
+/build*/
+
+# Other common CMake build directories
+/cmake-build-*/
+/out/
+
+# CMake files accidentally generated in the source tree
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+build.ninja
+.ninja_deps
+.ninja_log
+compile_commands.json
+
+# Generated firmware and PIO artifacts
+*.elf
+*.elf.map
+*.uf2
+*.bin
+*.hex
+*.dis
+*.pio.h
+
+# Local archives
 *.zip
+
+# Visual Studio Code local files
+/.vscode/*
+!/.vscode/extensions.json
+!/.vscode/settings.json
+
+# Operating-system files
+.DS_Store
+Thumbs.db

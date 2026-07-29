@@ -1,9 +1,233 @@
 #include "audio/spectrum_analyzer.hpp"
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 
-namespace { constexpr float kPi=3.14159265358979323846f; constexpr uint16_t ranges[32][2]={{1,1},{2,2},{3,3},{4,4},{5,5},{6,6},{7,7},{8,8},{9,9},{10,11},{12,13},{14,16},{17,19},{20,22},{23,26},{27,31},{32,36},{37,42},{43,49},{50,58},{59,68},{69,80},{81,94},{95,110},{111,129},{130,151},{152,177},{178,207},{208,242},{243,283},{284,331},{332,384}};
-uint16_t level(float e,uint16_t& s){float v=std::sqrt(std::max(0.f,e))*512.f;uint16_t t=static_cast<uint16_t>(std::min(65535.f,v));s=t>s?static_cast<uint16_t>(s+((t-s)>>1)):static_cast<uint16_t>(s-((s-t)>>4));return s;}
-void fft(std::array<float,1024>&r,std::array<float,1024>&im){for(unsigned i=1,j=0;i<1024;i++){unsigned b=512;for(;j&b;b>>=1)j^=b;j^=b;if(i<j){std::swap(r[i],r[j]);std::swap(im[i],im[j]);}}for(unsigned n=2;n<=1024;n<<=1){float a=-2*kPi/n,wr0=std::cos(a),wi0=std::sin(a);for(unsigned i=0;i<1024;i+=n){float wr=1,wi=0;for(unsigned j=0;j<n/2;j++){unsigned u=i+j,v=u+n/2;float tr=wr*r[v]-wi*im[v],ti=wr*im[v]+wi*r[v];r[v]=r[u]-tr;im[v]=im[u]-ti;r[u]+=tr;im[u]+=ti;float q=wr;wr=q*wr0-wi*wi0;wi=q*wi0+wi*wr0;}}}}
+namespace {
+
+constexpr float kHannPowerNormalization = 0.3746337890625f;
+constexpr float kFftLengthSquared =
+    static_cast<float>(kSpectrumWindowSamples * kSpectrumWindowSamples);
+constexpr float kPositiveBinPowerScale =
+    2.0f / (kFftLengthSquared * kHannPowerNormalization);
+
+// These are provisional spectrum-level conversion constants. They keep a
+// full-scale, bin-centred sine wave below saturation while physical testing
+// selects the final gain and noise-floor values.
+constexpr float kNoiseFloorPerBin = 0.0f;
+constexpr float kSpectrumGain = 1.0f;
+constexpr float kReferenceEnergy = 32768.0f;
+constexpr float kHannStepCosine = 0.9999811384617630f;
+constexpr float kHannStepSine = 0.0061418825059791f;
+
+struct ComplexCoefficient {
+    float real;
+    float imaginary;
+};
+
+// One base coefficient per radix-2 stage. These flash-resident constants
+// remove all sine/cosine calls from the FFT itself. Each stage generates its
+// successive roots by complex multiplication.
+constexpr std::array<ComplexCoefficient, 10> kStageTwiddles{{
+    {-1.0f, 0.0f},
+    {0.0f, -1.0f},
+    {0.7071067811865475f, -0.7071067811865475f},
+    {0.9238795325112867f, -0.3826834323650898f},
+    {0.9807852804032304f, -0.19509032201612825f},
+    {0.9951847266721969f, -0.0980171403295606f},
+    {0.9987954562051724f, -0.0490676743274180f},
+    {0.9996988186962042f, -0.0245412285229123f},
+    {0.9999247018391445f, -0.0122715382857199f},
+    {0.9999811752826011f, -0.0061358846491545f},
+}};
+
+uint16_t smooth_level(uint16_t target, uint16_t& previous) {
+    if (target > previous) {
+        previous = static_cast<uint16_t>(
+            previous + ((static_cast<uint32_t>(target) - previous) >> 1));
+    } else {
+        previous = static_cast<uint16_t>(
+            previous - ((static_cast<uint32_t>(previous) - target) >> 4));
+    }
+
+    return previous;
 }
-bool SpectrumAnalyzer::push(const CenteredMonoBlock& b,SpectrumFrame& out){for(auto v:b.samples){if(count_<1024)samples_[count_++]=v;}if(count_<1024)return false;for(size_t i=0;i<1024;i++){float h=.5f-.5f*std::cos(2*kPi*i/1023);real_[i]=samples_[i]*h;imag_[i]=0;}fft(real_,imag_);for(size_t x=0;x<32;x++){float e=0;for(unsigned k=ranges[x][0];k<=ranges[x][1];k++)e+=2*(real_[k]*real_[k]+imag_[k]*imag_[k])/(1024.f*1024.f*.3746f);out.bands[x]=level(e,smooth_[x]);}auto macro=[&](unsigned a,unsigned z,unsigned slot){float e=0;for(unsigned k=a;k<=z;k++)e+=2*(real_[k]*real_[k]+imag_[k]*imag_[k])/(1024.f*1024.f*.3746f);return level(e,smooth_[slot]);};out.bass=macro(1,5,32);out.low=macro(6,16,33);out.mid=macro(17,80,34);out.high=macro(81,384,35);out.sequence=++sequence_;std::copy(samples_.begin()+512,samples_.end(),samples_.begin());count_=512;return true;}
+
+uint16_t convert_energy_to_level(float energy,
+                                 uint16_t bin_count,
+                                 uint16_t& previous) {
+    const float noise_energy =
+        kNoiseFloorPerBin * static_cast<float>(bin_count);
+    const float cleaned_energy = std::max(0.0f, energy - noise_energy);
+    const float normalized_level =
+        65535.0f * std::sqrt(cleaned_energy * kSpectrumGain) /
+        kReferenceEnergy;
+    const float clamped_level = std::clamp(normalized_level, 0.0f, 65535.0f);
+
+    return smooth_level(static_cast<uint16_t>(clamped_level), previous);
+}
+
+void execute_fft(std::array<float, kSpectrumWindowSamples>& real,
+                 std::array<float, kSpectrumWindowSamples>& imaginary) {
+    for (unsigned index = 1, reversed = 0;
+         index < kSpectrumWindowSamples;
+         ++index) {
+        unsigned bit = kSpectrumWindowSamples >> 1u;
+
+        while ((reversed & bit) != 0u) {
+            reversed ^= bit;
+            bit >>= 1u;
+        }
+
+        reversed ^= bit;
+
+        if (index < reversed) {
+            std::swap(real[index], real[reversed]);
+            std::swap(imaginary[index], imaginary[reversed]);
+        }
+    }
+
+    for (unsigned length = 2, stage = 0;
+         length <= kSpectrumWindowSamples;
+         length <<= 1u, ++stage) {
+        const ComplexCoefficient root = kStageTwiddles[stage];
+        const unsigned half_length = length >> 1u;
+
+        for (unsigned block = 0;
+             block < kSpectrumWindowSamples;
+             block += length) {
+            float twiddle_real = 1.0f;
+            float twiddle_imaginary = 0.0f;
+
+            for (unsigned offset = 0; offset < half_length; ++offset) {
+                const unsigned even_index = block + offset;
+                const unsigned odd_index = even_index + half_length;
+                const float transformed_real =
+                    twiddle_real * real[odd_index] -
+                    twiddle_imaginary * imaginary[odd_index];
+                const float transformed_imaginary =
+                    twiddle_real * imaginary[odd_index] +
+                    twiddle_imaginary * real[odd_index];
+                const float even_real = real[even_index];
+                const float even_imaginary = imaginary[even_index];
+
+                real[odd_index] = even_real - transformed_real;
+                imaginary[odd_index] = even_imaginary - transformed_imaginary;
+                real[even_index] = even_real + transformed_real;
+                imaginary[even_index] = even_imaginary + transformed_imaginary;
+
+                const float previous_twiddle_real = twiddle_real;
+                twiddle_real = previous_twiddle_real * root.real -
+                               twiddle_imaginary * root.imaginary;
+                twiddle_imaginary = previous_twiddle_real * root.imaginary +
+                                    twiddle_imaginary * root.real;
+            }
+        }
+    }
+}
+
+float normalized_bin_power(const std::array<float, kSpectrumWindowSamples>& real,
+                           const std::array<float, kSpectrumWindowSamples>& imaginary,
+                           uint16_t bin) {
+    return (real[bin] * real[bin] + imaginary[bin] * imaginary[bin]) *
+           kPositiveBinPowerScale;
+}
+
+float range_energy(const std::array<float, kSpectrumWindowSamples>& real,
+                   const std::array<float, kSpectrumWindowSamples>& imaginary,
+                   SpectrumBandRange range) {
+    float energy = 0.0f;
+
+    for (uint16_t bin = range.first; bin <= range.last; ++bin) {
+        energy += normalized_bin_power(real, imaginary, bin);
+    }
+
+    return energy;
+}
+
+uint16_t range_bin_count(SpectrumBandRange range) {
+    return static_cast<uint16_t>(range.last - range.first + 1u);
+}
+
+}  // namespace
+
+bool SpectrumAnalyzer::push(const CenteredMonoBlock& block, SpectrumFrame& output) {
+    if (have_input_sequence_ && block.sequence > last_input_sequence_ + 1u) {
+        dropped_windows_ += block.sequence - last_input_sequence_ - 1u;
+        sample_count_ = 0;
+    }
+
+    last_input_sequence_ = block.sequence;
+    have_input_sequence_ = true;
+
+    for (int16_t sample : block.samples) {
+        if (sample_count_ < kSpectrumWindowSamples) {
+            samples_[sample_count_] = sample;
+            ++sample_count_;
+        }
+    }
+
+    if (sample_count_ < kSpectrumWindowSamples) {
+        return false;
+    }
+
+    float hann_phase_cosine = 1.0f;
+    float hann_phase_sine = 0.0f;
+
+    for (std::size_t index = 0; index < kSpectrumWindowSamples; ++index) {
+        const float hann = 0.5f - 0.5f * hann_phase_cosine;
+        real_[index] = static_cast<float>(samples_[index]) * hann;
+        imaginary_[index] = 0.0f;
+
+        const float previous_phase_cosine = hann_phase_cosine;
+        hann_phase_cosine = previous_phase_cosine * kHannStepCosine -
+                            hann_phase_sine * kHannStepSine;
+        hann_phase_sine = previous_phase_cosine * kHannStepSine +
+                           hann_phase_sine * kHannStepCosine;
+    }
+
+    execute_fft(real_, imaginary_);
+
+    for (std::size_t band = 0; band < kSpectrumBandRanges.size(); ++band) {
+        const float energy = range_energy(real_, imaginary_, kSpectrumBandRanges[band]);
+        output.bands[band] = convert_energy_to_level(
+            energy,
+            range_bin_count(kSpectrumBandRanges[band]),
+            smoothed_levels_[band]);
+    }
+
+    constexpr SpectrumBandRange kBassRange{1, 5};
+    constexpr SpectrumBandRange kLowRange{6, 16};
+    constexpr SpectrumBandRange kMidRange{17, 80};
+    constexpr SpectrumBandRange kHighRange{81, 384};
+
+    output.bass = convert_energy_to_level(
+        range_energy(real_, imaginary_, kBassRange),
+        range_bin_count(kBassRange),
+        smoothed_levels_[32]);
+    output.low = convert_energy_to_level(
+        range_energy(real_, imaginary_, kLowRange),
+        range_bin_count(kLowRange),
+        smoothed_levels_[33]);
+    output.mid = convert_energy_to_level(
+        range_energy(real_, imaginary_, kMidRange),
+        range_bin_count(kMidRange),
+        smoothed_levels_[34]);
+    output.high = convert_energy_to_level(
+        range_energy(real_, imaginary_, kHighRange),
+        range_bin_count(kHighRange),
+        smoothed_levels_[35]);
+
+    output.sequence = block.sequence;
+    output.analysis_time_us = 0;
+    output.maximum_analysis_time_us = maximum_analysis_time_us_;
+    output.dropped_windows = dropped_windows_;
+
+    std::copy(samples_.begin() + (kSpectrumWindowSamples / 2u),
+              samples_.end(),
+              samples_.begin());
+    sample_count_ = kSpectrumWindowSamples / 2u;
+
+    return true;
+}

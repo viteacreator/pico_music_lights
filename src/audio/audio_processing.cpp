@@ -79,7 +79,8 @@ void audio_processor_reset(AudioProcessor& processor) {
 }
 
 AudioLevelFrame process_audio_block(AudioProcessor& processor, const uint16_t* samples,
-                                    uint32_t sequence, uint32_t dropped_blocks) {
+                                    uint32_t sequence, uint32_t dropped_blocks,
+                                    CenteredMonoBlock* centered_mono_output) {
     AudioLevelFrame frame{};
     frame.sequence = sequence;
     frame.dropped_blocks = dropped_blocks;
@@ -94,6 +95,11 @@ AudioLevelFrame process_audio_block(AudioProcessor& processor, const uint16_t* s
         const int32_t right = static_cast<int32_t>(samples[index * kAudioChannels + 1] & kAdcMaximum) -
                               (processor.dc_q8[1] >> 8);
         const int32_t mono = (left + right) / 2;
+
+        if (centered_mono_output != nullptr) {
+            centered_mono_output->samples[index] = static_cast<int16_t>(mono);
+        }
+
         const uint16_t absolute = static_cast<uint16_t>(mono < 0 ? -mono : mono);
         frame.mono_metrics.peak = std::max(frame.mono_metrics.peak, absolute);
         mono_sum_squares += static_cast<uint32_t>(mono * mono);
@@ -102,6 +108,10 @@ AudioLevelFrame process_audio_block(AudioProcessor& processor, const uint16_t* s
     processor.mono_envelope = update_envelope(processor.mono_envelope, frame.mono_metrics.rms);
     frame.mono_metrics.envelope = processor.mono_envelope;
     frame.mono = frame.mono_metrics.envelope;
+
+    if (centered_mono_output != nullptr) {
+        centered_mono_output->sequence = sequence;
+    }
 
     processor.initialized = true;
     frame.left_peak = frame.channels[0].peak;

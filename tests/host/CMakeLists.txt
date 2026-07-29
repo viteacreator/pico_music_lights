@@ -13,6 +13,8 @@ add_executable(led_logic_tests
     ../../src/led/led_strip.cpp
     ../../src/led/led_output_conversion.cpp
     ../../src/audio/audio_processing.cpp
+    ../../src/audio/spectrum_analyzer.cpp
+    ../../src/audio/spectrum_resampler.cpp
 )
 target_include_directories(led_logic_tests PRIVATE ../../include ../../src)
 add_test(NAME led_logic_tests COMMAND led_logic_tests)

@@ -1,6 +1,8 @@
+#include <algorithm>
 #include <cstdio>
 
 #include "audio/audio_capture.hpp"
+#include "audio/spectrum_analyzer.hpp"
 #include "pico/stdlib.h"
 
 extern "C" bool led_vu_initialize(void);
@@ -40,9 +42,21 @@ int main() {
                 static_cast<unsigned long>(audio_capture_dma_channel()));
 
     AudioLevelFrame frame{};
+    CenteredMonoBlock centered_mono{};
+    SpectrumAnalyzer spectrum_analyzer;
+    SpectrumFrame spectrum_frame{};
     uint64_t last_diagnostic_us = 0;
+    uint32_t maximum_analysis_us = 0;
     while (true) {
-        if (audio_capture_process(frame)) {
+        if (audio_capture_process(frame, centered_mono)) {
+            const uint64_t analysis_start_us = time_us_64();
+            if (spectrum_analyzer.push(centered_mono, spectrum_frame)) {
+                spectrum_frame.analysis_time_us =
+                    static_cast<uint32_t>(time_us_64() - analysis_start_us);
+                maximum_analysis_us = std::max(maximum_analysis_us,
+                                                spectrum_frame.analysis_time_us);
+                spectrum_frame.maximum_analysis_time_us = maximum_analysis_us;
+            }
             led_vu_update(&frame);
             if (time_us_64() - last_diagnostic_us > kDiagnosticIntervalUs) {
                 last_diagnostic_us = time_us_64();
