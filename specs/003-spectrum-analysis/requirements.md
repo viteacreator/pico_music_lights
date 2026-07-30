@@ -71,6 +71,11 @@ butterfly residues from surviving all ten scaled stages as false broadband
 energy. It does not change the `1 / 1024` total FFT scale or the calibration
 constants.
 
+Dominant-bin reporting is integer-only. A unique nonzero maximum reports its
+own bin. A contiguous equal-energy maximum plateau reports its centre; for an
+even-width plateau the lower central bin is selected. Separate equal maxima
+retain the first, lowest-frequency plateau. Exact silence reports bin 0.
+
 ## Automatic runtime and debug output
 
 After boot the firmware automatically initializes USB debug output, mandatory

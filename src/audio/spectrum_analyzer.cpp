@@ -57,6 +57,33 @@ uint16_t range_bin_count(SpectrumBandRange range) {
     return static_cast<uint16_t>(range.last - range.first + 1u);
 }
 
+uint16_t select_dominant_bin(const spectrum_q15::Backend& backend,
+                             uint64_t maximum_energy) {
+    if (maximum_energy == 0u) {
+        return 0u;
+    }
+
+    for (uint16_t first = 1u; first <= kSpectrumPositiveBinLimit; ++first) {
+        if (backend.positive_bin_energy(first) != maximum_energy) {
+            continue;
+        }
+
+        uint16_t last = first;
+        while (last < kSpectrumPositiveBinLimit &&
+               backend.positive_bin_energy(static_cast<uint16_t>(last + 1u)) ==
+                   maximum_energy) {
+            ++last;
+        }
+
+        // The lower centre gives a deterministic result for an even-width
+        // plateau. If separated plateaus share the same maximum, the first
+        // (lowest-frequency) plateau wins, retaining the prior tie policy.
+        return static_cast<uint16_t>(first + (last - first) / 2u);
+    }
+
+    return 0u;
+}
+
 }  // namespace
 
 const SpectrumDiagnostics& SpectrumAnalyzer::diagnostics() const {
@@ -92,7 +119,6 @@ bool SpectrumAnalyzer::push(const CenteredMonoBlock& block, SpectrumFrame& outpu
 
     uint64_t total_q15_energy = 0;
     uint64_t dominant_q15_energy = 0;
-    uint16_t dominant_bin = 0;
 
     for (uint16_t bin = 1; bin <= kSpectrumPositiveBinLimit; ++bin) {
         const uint64_t energy = q15_backend_.positive_bin_energy(bin);
@@ -100,7 +126,6 @@ bool SpectrumAnalyzer::push(const CenteredMonoBlock& block, SpectrumFrame& outpu
 
         if (energy > dominant_q15_energy) {
             dominant_q15_energy = energy;
-            dominant_bin = bin;
         }
     }
 
@@ -108,7 +133,8 @@ bool SpectrumAnalyzer::push(const CenteredMonoBlock& block, SpectrumFrame& outpu
         static_cast<float>(total_q15_energy) / kHannPowerNormalization;
     diagnostics_.dominant_bin_power =
         static_cast<float>(dominant_q15_energy) / kHannPowerNormalization;
-    diagnostics_.dominant_bin = dominant_bin;
+    diagnostics_.dominant_bin =
+        select_dominant_bin(q15_backend_, dominant_q15_energy);
 
     for (std::size_t band = 0; band < kSpectrumBandRanges.size(); ++band) {
         const SpectrumBandRange range = kSpectrumBandRanges[band];

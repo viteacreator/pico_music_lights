@@ -222,6 +222,26 @@ bool test_q15_low_level_quantization_and_symmetry() {
            dc_backend.positive_bin_energy(3) == 0u;
 }
 
+bool test_dominant_bin_plateau_selection() {
+    spectrum_q15::Backend backend{};
+    backend.transform(make_q15_tone(32, 8));
+
+    const uint64_t plateau_energy = backend.positive_bin_energy(32);
+    if (plateau_energy == 0u ||
+        backend.positive_bin_energy(31) != plateau_energy ||
+        backend.positive_bin_energy(33) != plateau_energy) {
+        return false;
+    }
+
+    SpectrumAnalyzer analyzer{};
+    SpectrumFrame frame{};
+    if (!push_window(analyzer, 32, 0, frame, 8)) {
+        return false;
+    }
+
+    return analyzer.diagnostics().dominant_bin == 32u;
+}
+
 bool test_window_timing_and_overlap() {
     SpectrumAnalyzer analyzer{};
     SpectrumFrame frame{};
@@ -435,10 +455,11 @@ bool test_resampling() {
 
 int main() {
     struct NamedTest { const char* name; bool (*run)(); };
-    const std::array<NamedTest, 13> tests{{
+    const std::array<NamedTest, 14> tests{{
         {"mapping", test_mapping_is_complete},
         {"q15_float_reference", test_q15_float_reference_and_saturation},
         {"q15_low_level_quantization", test_q15_low_level_quantization_and_symmetry},
+        {"dominant_bin_plateau", test_dominant_bin_plateau_selection},
         {"window_overlap", test_window_timing_and_overlap},
         {"hann_dc", test_hann_endpoints_and_dc_rejection},
         {"noise_floor_reference", test_noise_floor_and_reference_level},

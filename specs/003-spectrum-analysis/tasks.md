@@ -8,14 +8,15 @@
 - [x] Add host Q15-to-float-reference energy tolerance, exact silence,
   1/2/4-count floor suppression, 8-count detection/dominant-bin/leakage,
   signed symmetry, residual DC removal, reference level, strong-input safety,
-  and spectrum classification/continuity coverage.
+  contiguous dominant-bin plateau selection, and spectrum
+  classification/continuity coverage.
 - [x] Remove normal command workflow; add automatic startup, deferred one-time
   CDC startup delivery, renderer enable when available, one-second integer
   `DBG` telemetry, and bounded USB output.
 - [x] Add pure renderer-only envelope/spectrum visual normalization and tests.
 - [x] Build Pico W Release firmware and inspect map/flash-table placement.
-- [ ] Run all native host targets in a clean native toolchain after the
-  ties-to-even correction.
+- [x] Run all native host targets in a clean native toolchain after the
+  dominant-bin plateau correction.
 - [ ] Owner physical validation: Q15 timing, normal continuity counters,
   80/300/1000/6000 Hz, quiet/reference input, music, USB logging, and six
   automatic diagnostic views.

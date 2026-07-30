@@ -32,7 +32,9 @@ CenteredMonoBlock (256 Q0 samples)
 diagnostics. Feature 002 still owns ADC, DMA, IRQ, and two capture buffers.
 No capture ownership transition changed.
 
-The Q15 backend stores 1,024 complex signed-16-bit bins: 2,048 bytes SRAM.
+`ComplexQ15` contains one signed 16-bit real value and one signed 16-bit
+imaginary value, so `sizeof(ComplexQ15) == 4`. The 1,024-bin Q15 complex FFT
+work array therefore occupies 4,096 bytes SRAM.
 The 1,024 Hann coefficients and 512 complex twiddles occupy 4,096 bytes of
 flash read-only data. The old float real and imaginary work arrays occupied
 8,192 bytes SRAM; the Q15 backend reduces analyzer working memory accordingly.
@@ -51,6 +53,12 @@ persisting as `+1` and `-1`; a half-way value rounds toward the even retained
 integer. This avoids systematic one-count residue retention while preserving
 symmetry, deterministic operation, saturation protection, and the total
 `1 / 1024` transform scale.
+
+Dominant-bin selection is integer-only. A unique nonzero maximum reports its
+own bin. For a contiguous equal-energy maximum plateau, the reported bin is
+the centre; an even-width plateau uses the lower of its two central bins. If
+separated plateaus share the maximum, the first (lowest-frequency) plateau is
+selected. Exact silence reports bin 0.
 
 ## Runtime scheduling
 

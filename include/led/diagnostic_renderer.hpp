@@ -10,8 +10,9 @@ struct DiagnosticRendererStats {
     uint32_t skipped_busy_frames = 0;
 };
 
-// Initializes the fixed, temporary six-strip diagnostic scene. The renderer
-// is disabled by default so spectrum validation can run without LED updates.
+// Initializes the fixed, temporary six-strip diagnostic scene. The module is
+// internally disabled at initialization; audio_app enables it automatically
+// after successful or partial LED initialization when a strip is usable.
 bool diagnostic_renderer_initialize();
 bool diagnostic_renderer_set_enabled(bool enabled);
 bool diagnostic_renderer_is_enabled();
