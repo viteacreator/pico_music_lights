@@ -99,9 +99,17 @@ The installed total is 696 pixels. The firmware reserves capacity for at most
 Every strip shall independently support at least:
 
 * Off
-* Static colour
+* Static Direct RGBW colour
+* Static White Boost colour
 * Music reactive
 * Test mode
+
+White Boost is a logical RGBW drive mode. It drives only the dedicated White
+channel from 0 to 100 percent, then holds White at maximum while blending a
+configurable RGB assist colour from 100 to 200 percent. It is not a calibrated
+claim of twice the luminous output: it is applied before strip brightness and
+future current limiting, and may require substantially more electrical current
+than dedicated White alone.
 
 Future modes may include:
 
@@ -172,6 +180,18 @@ Effects shall not directly access:
 * the web server.
 
 Effects shall receive processed audio data and render into pixel buffers.
+
+Feature 004 provides a hardware-independent Effect Engine with six fixed,
+independent strip runtimes. Every runtime owns its configuration and temporal
+state; effects receive an explicit logical pixel span and one shared read-only
+audio/spectrum snapshot. A strip may independently select effect, compatible
+source, RGBW colours, geometry, direction and response parameters. The engine
+performs one shared audio analysis/FFT cycle, not one analysis per strip.
+
+Effect configuration is validated and applied atomically at a render boundary.
+The normal renderer skips a due frame if LED transport is busy, rather than
+compromising audio continuity. Wi-Fi, web configuration and persistence will
+use the engine's application-facing configuration API in later features.
 
 The internal pixel representation shall preserve all four physical channels.
 

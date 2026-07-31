@@ -45,7 +45,8 @@ void prepare_startup_report() {
         "DBG startup build=%s audio=ok renderer=%s usable_strips=%u "
         "aggregate_hz=%lu mono_hz=%lu fft_size=%u overlap_pct=%lu backend=q15 "
         "noise_floor=1 gain=1 reference_energy=32768 renderer_enabled=%s\n"
-        "DBG pixels=132,174,141,81,96,72 order=GRBW brightness=16\n",
+        "DBG pixels=132,174,141,81,96,72 order=GRBW brightness=16\n"
+        "DBG effects=1:spectrum16,2:mirror5,3:macro4,4:stereo,5:mono_vu,6:aux_vu generation=%lu\n",
         PICO_PROGRAM_VERSION_STRING,
         g_renderer_available ? "ok" : "unavailable",
         static_cast<unsigned>(diagnostic_renderer_usable_strip_count()),
@@ -53,7 +54,9 @@ void prepare_startup_report() {
         static_cast<unsigned long>(kMonoSampleRate),
         static_cast<unsigned>(kSpectrumWindowSamples),
         static_cast<unsigned long>(kSpectrumOverlapPercent),
-        diagnostic_renderer_is_enabled() ? "yes" : "no");
+        diagnostic_renderer_is_enabled() ? "yes" : "no",
+        static_cast<unsigned long>(
+            diagnostic_renderer_configuration_generation()));
 
     if (length > 0 &&
         static_cast<std::size_t>(length) < g_startup_report.size()) {
@@ -104,7 +107,9 @@ void print_telemetry() {
         "audio_work_us=%lu audio_work_max_us=%lu "
         "raw_mean_milli=%llu raw_max_milli=%llu dominant_bin=%u dominant_hz=%lu renderer=%s "
         "led_frames_started=%lu led_frames_completed=%lu led_frame_timeouts=%lu "
-        "led_last_status=%u led_frames_skipped_busy=%lu\n",
+        "led_last_status=%u led_frames_skipped_busy=%lu effect_config_generation=%lu "
+        "effect_frames_started=%lu effect_frames_completed=%lu "
+        "effect_frames_skipped_busy=%lu effect_render_us=%lu effect_render_max_us=%lu\n",
         static_cast<unsigned long long>(time_us_64() / 1000u),
         static_cast<unsigned long>(g_audio_frame.sequence),
         g_audio_frame.left,
@@ -134,7 +139,14 @@ void print_telemetry() {
         static_cast<unsigned long>(renderer.led_frames_completed),
         static_cast<unsigned long>(renderer.led_frame_timeouts),
         static_cast<unsigned>(renderer.led_last_status),
-        static_cast<unsigned long>(renderer.led_frames_skipped_busy));
+        static_cast<unsigned long>(renderer.led_frames_skipped_busy),
+        static_cast<unsigned long>(
+            diagnostic_renderer_configuration_generation()),
+        static_cast<unsigned long>(renderer.effect_frames_started),
+        static_cast<unsigned long>(renderer.effect_frames_completed),
+        static_cast<unsigned long>(renderer.effect_frames_skipped_busy),
+        static_cast<unsigned long>(renderer.effect_render_us),
+        static_cast<unsigned long>(renderer.effect_render_max_us));
 
     if (length <= 0 ||
         static_cast<std::size_t>(length) >= g_telemetry_line.size() ||
@@ -190,7 +202,7 @@ int main() {
             g_maximum_audio_work_us = std::max(
                 g_maximum_audio_work_us, g_audio_work_us);
 
-            // An FFT-producing block must yield directly to the next capture
+            // Every processed audio block yields directly to the next capture
             // opportunity. Rendering and telemetry run only in idle-audio
             // iterations below.
             continue;

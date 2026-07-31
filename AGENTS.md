@@ -9,3 +9,11 @@
 - Prefer small, focused, low-risk changes; avoid broad refactoring unless required.
 - Confirm a change is still necessary before editing, preserve tested behaviour,
   review the complete final diff, and remove unrelated/generated changes.
+- Keep reusable effect calculations hardware-independent and pass each effect an
+  explicit destination pixel span.
+- Keep effect state independent for every strip. Effects consume shared,
+  read-only audio and spectrum frames; they must not embed physical strip
+  numbers or access hardware.
+- Validate effect configuration changes before applying them atomically at a
+  render boundary. Do not allocate memory dynamically in the real-time render
+  path.

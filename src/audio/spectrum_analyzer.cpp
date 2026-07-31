@@ -49,9 +49,8 @@ uint16_t smooth_level(uint16_t target, uint16_t& previous) {
     return previous;
 }
 
-uint16_t convert_q15_energy_to_level(uint64_t q15_energy,
-                                     uint16_t bin_count,
-                                     uint16_t& previous) {
+uint16_t convert_q15_energy_to_raw_level(uint64_t q15_energy,
+                                         uint16_t bin_count) {
     // kHannPowerNormalization is exactly 24552 / 65536. With the approved
     // gain=1 and reference_energy=32768, this is the existing level formula
     // evaluated in integer Q32 form, avoiding 36 soft-float square roots per
@@ -61,7 +60,7 @@ uint16_t convert_q15_energy_to_level(uint64_t q15_energy,
     const uint64_t energy_numerator = q15_energy * kHannPowerDenominator;
 
     if (energy_numerator <= noise_numerator) {
-        return smooth_level(0u, previous);
+        return 0u;
     }
 
     const uint64_t clean_numerator = energy_numerator - noise_numerator;
@@ -69,7 +68,7 @@ uint16_t convert_q15_energy_to_level(uint64_t q15_energy,
         kHannPowerNumerator * kReferenceEnergy;
 
     if (clean_numerator >= level_denominator) {
-        return smooth_level(65535u, previous);
+        return 65535u;
     }
 
     const uint64_t ratio_q32 =
@@ -78,7 +77,7 @@ uint16_t convert_q15_energy_to_level(uint64_t q15_energy,
     const uint32_t scaled_level =
         (65535u * root_q16 + 32768u) >> 16u;
 
-    return smooth_level(static_cast<uint16_t>(scaled_level), previous);
+    return static_cast<uint16_t>(scaled_level);
 }
 
 uint64_t range_q15_energy(const spectrum_q15::Backend& backend,
@@ -177,9 +176,11 @@ bool SpectrumAnalyzer::push(const CenteredMonoBlock& block, SpectrumFrame& outpu
 
     for (std::size_t band = 0; band < kSpectrumBandRanges.size(); ++band) {
         const SpectrumBandRange range = kSpectrumBandRanges[band];
-        output.bands[band] = convert_q15_energy_to_level(
+        output.raw_bands[band] = convert_q15_energy_to_raw_level(
             range_q15_energy(q15_backend_, range),
-            range_bin_count(range),
+            range_bin_count(range));
+        output.bands[band] = smooth_level(
+            output.raw_bands[band],
             smoothed_levels_[band]);
     }
 
@@ -188,22 +189,22 @@ bool SpectrumAnalyzer::push(const CenteredMonoBlock& block, SpectrumFrame& outpu
     constexpr SpectrumBandRange kMidRange{17, 80};
     constexpr SpectrumBandRange kHighRange{81, 384};
 
-    output.bass = convert_q15_energy_to_level(
+    output.raw_bass = convert_q15_energy_to_raw_level(
         range_q15_energy(q15_backend_, kBassRange),
-        range_bin_count(kBassRange),
-        smoothed_levels_[32]);
-    output.low = convert_q15_energy_to_level(
+        range_bin_count(kBassRange));
+    output.bass = smooth_level(output.raw_bass, smoothed_levels_[32]);
+    output.raw_low = convert_q15_energy_to_raw_level(
         range_q15_energy(q15_backend_, kLowRange),
-        range_bin_count(kLowRange),
-        smoothed_levels_[33]);
-    output.mid = convert_q15_energy_to_level(
+        range_bin_count(kLowRange));
+    output.low = smooth_level(output.raw_low, smoothed_levels_[33]);
+    output.raw_mid = convert_q15_energy_to_raw_level(
         range_q15_energy(q15_backend_, kMidRange),
-        range_bin_count(kMidRange),
-        smoothed_levels_[34]);
-    output.high = convert_q15_energy_to_level(
+        range_bin_count(kMidRange));
+    output.mid = smooth_level(output.raw_mid, smoothed_levels_[34]);
+    output.raw_high = convert_q15_energy_to_raw_level(
         range_q15_energy(q15_backend_, kHighRange),
-        range_bin_count(kHighRange),
-        smoothed_levels_[35]);
+        range_bin_count(kHighRange));
+    output.high = smooth_level(output.raw_high, smoothed_levels_[35]);
 
     output.sequence = block.sequence;
     output.analysis_time_us = 0;

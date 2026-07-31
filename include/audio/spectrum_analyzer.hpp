@@ -29,6 +29,15 @@ constexpr std::array<SpectrumBandRange, kSpectrumBandCount> kSpectrumBandRanges{
 }};
 
 struct SpectrumFrame {
+    // Raw levels use the same 0-65535 conversion as the public smoothed
+    // levels, but are published before attack/release smoothing. Effects that
+    // need immediate transient response should use these fields.
+    std::array<uint16_t, kSpectrumBandCount> raw_bands{};
+    uint16_t raw_bass = 0;
+    uint16_t raw_low = 0;
+    uint16_t raw_mid = 0;
+    uint16_t raw_high = 0;
+
     std::array<uint16_t, kSpectrumBandCount> bands{};
     uint16_t bass = 0;
     uint16_t low = 0;

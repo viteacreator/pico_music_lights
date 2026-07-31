@@ -48,3 +48,10 @@ add_executable(diagnostic_renderer_tests
     ../../src/audio/spectrum_resampler.cpp
 )
 configure_host_test(diagnostic_renderer_tests)
+
+add_executable(effect_engine_tests
+    effect_engine_tests.cpp
+    ../../src/effects/effect_engine.cpp
+    ../../src/effects/effect_rendering.cpp
+)
+configure_host_test(effect_engine_tests)

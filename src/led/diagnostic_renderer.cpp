@@ -1,5 +1,6 @@
 #include "led/diagnostic_renderer.hpp"
 
+#include <algorithm>
 #include <array>
 #include "board/led_board_config.hpp"
 #include "led/diagnostic_rendering.hpp"
@@ -23,6 +24,7 @@ static_assert(board::kStripCount == 6, "Expected six LED strips");
 static_assert(board::kMaxConfiguredPixels == 800, "Unexpected LED pool size");
 
 LedOutputManager g_manager;
+effects::EffectEngine g_effect_engine;
 DiagnosticRendererStats g_stats;
 bool g_initialized = false;
 bool g_enabled = false;
@@ -59,17 +61,6 @@ bool configure_manager() {
     const LedStatus initialization = g_manager.initialize_drivers();
     return initialization == LedStatus::ok ||
            initialization == LedStatus::partial_success;
-}
-
-void render_temporary_scene(const AudioLevelFrame& audio,
-                            const SpectrumFrame& spectrum) {
-    render_spectrum_32_to_16(pixels_for_strip(0), spectrum);
-    render_symmetric_frequency_zones(pixels_for_strip(1), spectrum);
-    render_bass_mid_high_zones(pixels_for_strip(2), spectrum);
-    render_stereo_center_out(pixels_for_strip(3), audio.left, audio.right,
-                             {255, 0, 0, 0}, {0, 0, 255, 0});
-    render_full_vu(pixels_for_strip(4), audio.mono, {0, 255, 0, 0});
-    render_full_vu(pixels_for_strip(5), audio.aux, {0, 160, 255, 32});
 }
 
 }  // namespace
@@ -114,6 +105,7 @@ void diagnostic_renderer_service() {
     g_stats.led_last_status = status;
     if (status == LedStatus::ok) {
         ++g_stats.led_frames_completed;
+        ++g_stats.effect_frames_completed;
     } else if (status == LedStatus::transmission_timeout) {
         ++g_stats.led_frame_timeouts;
     }
@@ -141,6 +133,7 @@ void diagnostic_renderer_update(const AudioLevelFrame& audio,
         // counter.
         g_last_update_us = now_us;
         ++g_stats.led_frames_skipped_busy;
+        ++g_stats.effect_frames_skipped_busy;
         return;
     }
 
@@ -149,15 +142,34 @@ void diagnostic_renderer_update(const AudioLevelFrame& audio,
         return;
     }
 
-    render_temporary_scene(audio, spectrum);
+    std::array<effects::EffectRenderSpan, board::kStripCount> spans{};
+    for (std::size_t index = 0; index < spans.size(); ++index) {
+        const LogicalRgbwPixels pixels = pixels_for_strip(index);
+        spans[index] = {pixels.data, pixels.size};
+    }
+
+    const uint64_t render_start_us = time_us_64();
+    const effects::EffectInputSnapshot snapshot{
+        &audio,
+        &spectrum,
+        render_start_us,
+    };
+    g_effect_engine.render(snapshot, spans);
+    g_stats.effect_render_us = static_cast<uint32_t>(
+        time_us_64() - render_start_us);
+    g_stats.effect_render_max_us = std::max(
+        g_stats.effect_render_max_us, g_stats.effect_render_us);
+
     const LedStatus status = g_manager.start_show_all_enabled();
 
     if (status == LedStatus::ok) {
         g_last_update_us = now_us;
         ++g_stats.led_frames_started;
+        ++g_stats.effect_frames_started;
     } else if (status == LedStatus::busy) {
         g_last_update_us = now_us;
         ++g_stats.led_frames_skipped_busy;
+        ++g_stats.effect_frames_skipped_busy;
     } else {
         g_stats.led_last_status = status;
     }
@@ -169,4 +181,30 @@ const DiagnosticRendererStats& diagnostic_renderer_stats() {
 
 void diagnostic_renderer_reset_stats() {
     g_stats = {};
+}
+
+bool diagnostic_renderer_read_effect_config(
+    std::size_t strip_index,
+    effects::StripEffectConfig& output) {
+    return g_effect_engine.read_config(strip_index, output);
+}
+
+effects::EffectStatus diagnostic_renderer_stage_effect_config(
+    std::size_t strip_index,
+    const effects::StripEffectConfig& config) {
+    return g_effect_engine.stage_strip_config(strip_index, config);
+}
+
+effects::EffectStatus diagnostic_renderer_stage_effect_scene(
+    const std::array<effects::StripEffectConfig, effects::kEffectStripCount>& scene) {
+    return g_effect_engine.stage_scene(scene);
+}
+
+bool diagnostic_renderer_restore_default_effect_scene() {
+    g_effect_engine.restore_default_scene();
+    return true;
+}
+
+uint32_t diagnostic_renderer_configuration_generation() {
+    return g_effect_engine.configuration_generation();
 }
