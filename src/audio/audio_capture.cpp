@@ -111,6 +111,14 @@ bool audio_capture_initialize() {
     return true;
 }
 
+bool audio_capture_has_ready_block() {
+    const uint32_t irq = save_and_disable_interrupts();
+    const bool ready = states[0] == BufferState::ready ||
+                       states[1] == BufferState::ready;
+    restore_interrupts(irq);
+    return ready;
+}
+
 bool audio_capture_process(AudioLevelFrame& frame, CenteredMonoBlock& centered_mono) {
     int index = -1;
     const uint32_t irq = save_and_disable_interrupts();

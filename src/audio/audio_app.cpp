@@ -15,7 +15,7 @@ constexpr uint64_t kDiagnosticsPeriodUs = 1'000'000u;
 constexpr uint32_t kAudioAggregateSampleRate = 96'000u;
 constexpr uint32_t kMonoSampleRate = 32'000u;
 constexpr uint32_t kSpectrumOverlapPercent = 50u;
-constexpr std::size_t kTelemetryBufferSize = 448u;
+constexpr std::size_t kTelemetryBufferSize = 512u;
 constexpr std::size_t kStartupBufferSize = 320u;
 
 AudioLevelFrame g_audio_frame{};
@@ -26,6 +26,8 @@ std::array<char, kTelemetryBufferSize> g_telemetry_line{};
 std::array<char, kStartupBufferSize> g_startup_report{};
 std::size_t g_startup_report_length = 0;
 uint32_t g_maximum_analysis_us = 0;
+uint32_t g_audio_work_us = 0;
+uint32_t g_maximum_audio_work_us = 0;
 bool g_renderer_available = false;
 bool g_startup_report_delivered = false;
 
@@ -99,8 +101,10 @@ void print_telemetry() {
         "DBG t_ms=%llu audio_seq=%lu L=%u R=%u Aux=%u Mono=%u adc_drop=%lu "
         "adc_over=%lu adc_under=%lu spectrum_seq=%lu bass=%u low=%u mid=%u high=%u "
         "fft_us=%lu fft_max_us=%lu dropped_windows=%lu missing_audio_blocks=%lu "
+        "audio_work_us=%lu audio_work_max_us=%lu "
         "raw_mean_milli=%llu raw_max_milli=%llu dominant_bin=%u dominant_hz=%lu renderer=%s "
-        "renderer_frames=%lu renderer_skips=%lu\n",
+        "led_frames_started=%lu led_frames_completed=%lu led_frame_timeouts=%lu "
+        "led_last_status=%u led_frames_skipped_busy=%lu\n",
         static_cast<unsigned long long>(time_us_64() / 1000u),
         static_cast<unsigned long>(g_audio_frame.sequence),
         g_audio_frame.left,
@@ -119,13 +123,18 @@ void print_telemetry() {
         static_cast<unsigned long>(g_maximum_analysis_us),
         static_cast<unsigned long>(g_spectrum_frame.dropped_windows),
         static_cast<unsigned long>(g_spectrum_frame.missing_audio_blocks),
+        static_cast<unsigned long>(g_audio_work_us),
+        static_cast<unsigned long>(g_maximum_audio_work_us),
         static_cast<unsigned long long>(mean_power_milli),
         static_cast<unsigned long long>(maximum_power_milli),
         static_cast<unsigned>(raw.dominant_bin),
         static_cast<unsigned long>(dominant_frequency_hz(raw.dominant_bin)),
         g_renderer_available ? "ok" : "unavailable",
-        static_cast<unsigned long>(renderer.rendered_frames),
-        static_cast<unsigned long>(renderer.skipped_busy_frames));
+        static_cast<unsigned long>(renderer.led_frames_started),
+        static_cast<unsigned long>(renderer.led_frames_completed),
+        static_cast<unsigned long>(renderer.led_frame_timeouts),
+        static_cast<unsigned>(renderer.led_last_status),
+        static_cast<unsigned long>(renderer.led_frames_skipped_busy));
 
     if (length <= 0 ||
         static_cast<std::size_t>(length) >= g_telemetry_line.size() ||
@@ -143,17 +152,17 @@ void print_telemetry() {
 int main() {
     stdio_init_all();
 
+    g_renderer_available = diagnostic_renderer_initialize();
+    if (diagnostic_renderer_should_auto_enable(
+            g_renderer_available, diagnostic_renderer_usable_strip_count())) {
+        (void)diagnostic_renderer_set_enabled(true);
+    }
+
     if (!audio_capture_initialize()) {
         std::printf("DBG fatal audio_initialization=failed\n");
         while (true) {
             tight_loop_contents();
         }
-    }
-
-    g_renderer_available = diagnostic_renderer_initialize();
-    if (diagnostic_renderer_should_auto_enable(
-            g_renderer_available, diagnostic_renderer_usable_strip_count())) {
-        (void)diagnostic_renderer_set_enabled(true);
     }
 
     prepare_startup_report();
@@ -162,6 +171,7 @@ int main() {
     while (true) {
         diagnostic_renderer_service();
 
+        const uint64_t audio_work_start_us = time_us_64();
         if (audio_capture_process(g_audio_frame, g_centered_mono)) {
             const uint64_t analysis_start_us = time_us_64();
             const bool new_spectrum =
@@ -175,9 +185,29 @@ int main() {
                 g_spectrum_frame.maximum_analysis_time_us = g_maximum_analysis_us;
             }
 
-            if (g_renderer_available) {
-                diagnostic_renderer_update(g_audio_frame, g_spectrum_frame);
-            }
+            g_audio_work_us = static_cast<uint32_t>(
+                time_us_64() - audio_work_start_us);
+            g_maximum_audio_work_us = std::max(
+                g_maximum_audio_work_us, g_audio_work_us);
+
+            // An FFT-producing block must yield directly to the next capture
+            // opportunity. Rendering and telemetry run only in idle-audio
+            // iterations below.
+            continue;
+        }
+
+        // The capture IRQ may have completed a block after the failed acquire.
+        // Do not begin optional work when that happens.
+        if (audio_capture_has_ready_block()) {
+            continue;
+        }
+
+        if (g_renderer_available) {
+            diagnostic_renderer_update(g_audio_frame, g_spectrum_frame);
+        }
+
+        if (audio_capture_has_ready_block()) {
+            continue;
         }
 
         const uint64_t now_us = time_us_64();

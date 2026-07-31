@@ -46,6 +46,7 @@ add_executable(pico_music_lights
         src/led/rgbw_conversion.cpp
         src/led/led_strip.cpp
         src/led/led_output_conversion.cpp
+        src/led/led_frame_state.cpp
         src/led/led_output_manager.cpp
         src/led/sk6812_rgbw_driver.cpp
         src/led/diagnostic_rendering.cpp

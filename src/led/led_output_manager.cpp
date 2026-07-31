@@ -5,6 +5,7 @@
 
 #include "hardware/dma.h"
 #include "hardware/pio.h"
+#include "led/led_frame_state.hpp"
 #include "led/led_output_conversion.hpp"
 #include "pico/stdlib.h"
 
@@ -184,16 +185,9 @@ FramePhase LedOutputManager::frame_phase() const { return phase_; }
 
 LedStatus LedOutputManager::timeout_frame() {
     for (std::size_t index = 0; index < strips_.size(); ++index) {
-        if ((active_strip_mask_ & (1u << index)) == 0) continue;
-        if (!drivers_[index].physical_completion_confirmed()) {
-            std::printf("LED frame timeout: strip %u GPIO %lu PIO%u SM%u DMA%d\n",
-                        static_cast<unsigned>(index + 1),
-                        static_cast<unsigned long>(drivers_[index].gpio()),
-                        drivers_[index].pio_instance() == pio0 ? 0u : 1u,
-                        static_cast<unsigned>(drivers_[index].state_machine()),
-                        drivers_[index].dma_channel());
+        if ((active_strip_mask_ & (1u << index)) != 0u) {
+            drivers_[index].abort_transmission();
         }
-        drivers_[index].abort_transmission();
     }
     active_strip_mask_ = 0;
     phase_ = FramePhase::idle;
@@ -202,20 +196,33 @@ LedStatus LedOutputManager::timeout_frame() {
 
 LedStatus LedOutputManager::poll_frame_completion() {
     if (phase_ == FramePhase::idle) return LedStatus::ok;
-    if (time_us_64() >= frame_deadline_us_) return timeout_frame();
 
     if (phase_ == FramePhase::transmitting) {
+        bool all_outputs_complete = true;
+
         for (std::size_t index = 0; index < strips_.size(); ++index) {
             if ((active_strip_mask_ & (1u << index)) &&
                 !drivers_[index].physical_completion_confirmed()) {
-                return LedStatus::busy;
+                all_outputs_complete = false;
+                break;
             }
         }
-        latch_deadline_us_ = time_us_64() + kLatchIntervalUs;
-        phase_ = FramePhase::latching;
-        return LedStatus::busy;
+
+        switch (evaluate_led_transmission_poll(
+            all_outputs_complete, time_us_64(), frame_deadline_us_)) {
+        case LedFramePollAction::begin_latch:
+            latch_deadline_us_ = time_us_64() + kLatchIntervalUs;
+            phase_ = FramePhase::latching;
+            return LedStatus::busy;
+        case LedFramePollAction::timeout:
+            return timeout_frame();
+        case LedFramePollAction::remain_transmitting:
+            return LedStatus::busy;
+        }
     }
-    if (phase_ == FramePhase::latching && time_us_64() >= latch_deadline_us_) {
+
+    if (phase_ == FramePhase::latching &&
+        led_latch_interval_complete(time_us_64(), latch_deadline_us_)) {
         active_strip_mask_ = 0;
         phase_ = FramePhase::idle;
         return LedStatus::ok;

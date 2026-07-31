@@ -1,4 +1,5 @@
 #include "led/channel_order.hpp"
+#include "led/led_frame_state.hpp"
 #include "led/led_output_conversion.hpp"
 #include "led/led_status.hpp"
 #include "led/led_strip.hpp"
@@ -44,8 +45,38 @@ bool test_led_logic() {
            conversion_ok && validation_ok && stable_indexing_ok && reversed_output_ok;
 }
 
+bool test_frame_completion_state_machine() {
+    const bool before_deadline_completion =
+        evaluate_led_transmission_poll(true, 99, 100) ==
+        LedFramePollAction::begin_latch;
+    const bool delayed_poll_completion =
+        evaluate_led_transmission_poll(true, 101, 100) ==
+        LedFramePollAction::begin_latch;
+    const bool genuine_timeout =
+        evaluate_led_transmission_poll(false, 101, 100) ==
+        LedFramePollAction::timeout;
+    const bool still_transmitting =
+        evaluate_led_transmission_poll(false, 99, 100) ==
+        LedFramePollAction::remain_transmitting;
+    const bool latch_completion =
+        !led_latch_interval_complete(179, 180) &&
+        led_latch_interval_complete(180, 180);
+
+    // A new completed frame must remain independently completable after a
+    // prior timeout decision; no state is retained by the pure transition.
+    const bool recovery_after_timeout =
+        evaluate_led_transmission_poll(false, 101, 100) ==
+            LedFramePollAction::timeout &&
+        evaluate_led_transmission_poll(true, 201, 200) ==
+            LedFramePollAction::begin_latch;
+
+    return before_deadline_completion && delayed_poll_completion &&
+           genuine_timeout && still_transmitting && latch_completion &&
+           recovery_after_timeout;
+}
+
 }  // namespace
 
 int main() {
-    return test_led_logic() ? 0 : 1;
+    return test_led_logic() && test_frame_completion_state_machine() ? 0 : 1;
 }

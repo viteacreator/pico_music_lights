@@ -24,6 +24,7 @@ add_executable(led_logic_tests
     ../../src/led/rgbw_conversion.cpp
     ../../src/led/led_strip.cpp
     ../../src/led/led_output_conversion.cpp
+    ../../src/led/led_frame_state.cpp
 )
 configure_host_test(led_logic_tests)
 

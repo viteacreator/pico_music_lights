@@ -5,9 +5,9 @@
 The previous Release `-O3` Cortex-M0+ build used `-mfloat-abi=soft`. Its
 floating-point FFT required roughly 49,500 soft float multiplications, 35,000
 soft float additions/subtractions, and 36 square roots per completed window.
-Measured analysis time was about 63 ms, far above the 8 ms safe capture
-deadline. Precomputed float tables would remove recurrence work but retain soft
-float butterfly arithmetic, so they were not a reliable route below 8 ms.
+Measured analysis time was about 63 ms, far above the preferred 8 ms processing
+target. Precomputed float tables would remove recurrence work but retain soft
+float butterfly arithmetic, so they were not a reliable route below that target.
 
 The Q15 backend keeps the existing analysis contract while moving the hot path
 to integer arithmetic. The float backend is not built into the Pico production
@@ -38,10 +38,11 @@ work array therefore occupies 4,096 bytes SRAM.
 The 1,024 Hann coefficients and 512 complex twiddles occupy 4,096 bytes of
 flash read-only data. The old float real and imaginary work arrays occupied
 8,192 bytes SRAM; the Q15 backend reduces analyzer working memory accordingly.
-The current Release map reports 14,444 bytes in `.bss`; the ELF `size` summary
-reports 14,636 BSS bytes including its additional allocatable accounting. This
+The current Release map reports 14,528 bytes in `.bss` (`0x38c0`); the ELF
+`size` summary reports 14,720 BSS bytes including its additional allocatable
+accounting. This
 includes the 6,248-byte `SpectrumAnalyzer`, the existing audio/LED state, a
-448-byte telemetry buffer, and a 320-byte deferred-startup buffer. The map
+512-byte telemetry buffer, and a separate 320-byte deferred-startup buffer. The map
 remains authoritative because these numbers will change with later features.
 The Q15 transform uses scalar locals only and does not put a second 1,024-sample
 array on the stack; normal call-stack headroom still requires hardware
@@ -60,31 +61,70 @@ the centre; an even-width plateau uses the lower of its two central bins. If
 separated plateaus share the maximum, the first (lowest-frequency) plateau is
 selected. Exact silence reports bin 0.
 
+The final public-level formula keeps the same constants but no longer invokes
+soft-float square root 36 times per window. `H` is exactly `24552 / 65536`;
+for non-saturated output the analyzer evaluates the cleaned-energy ratio in
+Q32, takes an integer square root into Q16, scales to 0…65535, then applies the
+unchanged attack/release smoothing. This is numerically equivalent subject to
+documented integer rounding and does not alter Q15 FFT data, noise floor,
+gain, reference energy, bands, or smoothing constants.
+
 ## Runtime scheduling
 
-`audio_app` starts audio first. It then initializes the optional LED runtime;
-`ok` and `partial_success` both enable automatic temporary rendering. Failure
-does not stop analysis. One shared `SpectrumFrame` feeds all six renderer
+`audio_app` initializes the optional LED runtime before it starts continuous
+audio capture; `ok` and `partial_success` both enable automatic temporary
+rendering. LED failure does not stop analysis, but audio failure is fatal. This
+keeps non-time-critical PIO/DMA setup out of the capture-start interval. One
+shared `SpectrumFrame` feeds all six renderer
 views—there is no per-strip FFT.
 
 The normal loop continuously services LED completion, acquires/processes ready
-audio blocks, runs the analyzer, then conditionally starts an asynchronous LED
-frame. The existing PIO/DMA driver remains unchanged. Telemetry is scheduled
+audio blocks, and runs the analyzer. Every successfully processed audio block
+ends that loop iteration immediately, including a block that does not produce
+an FFT. Renderer and telemetry work run only in iterations where no audio block
+was processed; a second ready-block check precedes USB startup or telemetry
+work. The temporary renderer cadence is 30 Hz. The existing PIO/DMA driver
+remains unchanged. Telemetry is scheduled
 from `time_us_64()`, independent of audio sequences, at one second. The startup
 block is prepared in static storage, but delivery is deferred until CDC first
 connects and can accept the whole block; this never delays capture or rendering
 and occurs once only. Normal telemetry starts after that delivery, uses a fixed
-448-byte format buffer and an enlarged 512-byte CDC TX buffer, and is skipped
+512-byte format buffer and an enlarged 512-byte CDC TX buffer, and is skipped
 when the full line cannot be accepted immediately. Raw diagnostic energy is
 reported as integer milli-units, avoiding `%f`, `%e`, and `%g` formatting in
 the periodic path.
+
+For each ready audio block, `audio_work_us` measures Feature 002 processing and
+the complete analyzer call; `audio_work_max_us` is its cumulative maximum. LED
+rendering is measured separately from this audio path. The renderer maintains
+cumulative `led_frames_started`, `led_frames_completed`,
+`led_frame_timeouts`, and `led_last_status`, so timeouts do not produce repeated
+console-error lines.
+
+`fft_us` is the latest completed analyzer duration. `audio_work_us` measures
+the latest processed capture block and can be small for a non-FFT block;
+`audio_work_max_us` is the maximum complete block duration. Started and
+completed LED frames may differ by one while a frame is active. The busy-skip
+counter advances only when a due 30 Hz render slot is refused by an active LED
+frame, and consumes that slot so ordinary polls do not inflate it.
+
+This scheduling is intentional: capture processing and analysis have priority
+over temporary diagnostics. Renderer updates and telemetry are skipped or
+deferred rather than delaying a ready audio block. Feature 002 still owns the
+same two-buffer state machine; `audio_capture_has_ready_block()` is a short,
+interrupt-protected observation only and does not change ownership.
+
+In the LED manager, physical completion is evaluated before deadline expiry.
+If all active state machines completed before a delayed poll, the manager enters
+the existing 80 us latch phase even when that poll occurs after the deadline.
+Only an output still incomplete at expiry triggers `transmission_timeout`.
 
 Startup and telemetry use stable formats:
 
 ```text
 DBG startup build=0.1 audio=ok renderer=ok usable_strips=6 aggregate_hz=96000 mono_hz=32000 fft_size=1024 overlap_pct=50 backend=q15 noise_floor=1 gain=1 reference_energy=32768 renderer_enabled=yes
 DBG pixels=132,174,141,81,96,72 order=GRBW brightness=16
-DBG t_ms=123456 audio_seq=1000 L=120 R=118 Aux=40 Mono=115 adc_drop=0 adc_over=0 adc_under=0 spectrum_seq=480 bass=12000 low=9000 mid=4000 high=3000 fft_us=4200 fft_max_us=5100 dropped_windows=0 missing_audio_blocks=0 raw_mean_milli=420 raw_max_milli=38100 dominant_bin=3 dominant_hz=94 renderer=ok renderer_frames=600 renderer_skips=0
+DBG t_ms=123456 audio_seq=1000 L=120 R=118 Aux=40 Mono=115 adc_drop=0 adc_over=0 adc_under=0 spectrum_seq=480 bass=12000 low=9000 mid=4000 high=3000 fft_us=4200 fft_max_us=5100 dropped_windows=0 missing_audio_blocks=0 audio_work_us=4500 audio_work_max_us=5100 raw_mean_milli=420 raw_max_milli=38100 dominant_bin=3 dominant_hz=94 renderer=ok led_frames_started=600 led_frames_completed=600 led_frame_timeouts=0 led_last_status=0 led_frames_skipped_busy=0
 ```
 
 ## Renderer normalization
@@ -100,7 +140,8 @@ does not establish a permanent strip-to-effect relationship for Feature 004.
 Native coverage includes Q15 float-reference tolerance, exact silence,
 1/2/4-count floor suppression, 8-count detection/dominant-bin/leakage,
 positive/negative symmetry, residual DC removal, reference level, strong-input
-safety, and 80/300/1000/6000 Hz classification. The prior float timing failure
-is recorded above. Q15 timing, continuity, tone classification, noise
-behaviour, USB backpressure behaviour, and visible rendering remain pending
-owner hardware measurement.
+safety, and 80/300/1000/6000 Hz classification. Physical testing observed
+`fft_max_us=12295` and `audio_work_max_us=12728` with zero growth in audio
+drop/missing/overflow/underflow counters and zero LED timeouts for quiet input
+and ordinary audio. The extended 60-second quiet and music validation remains
+pending. Attack/release tuning is deferred to Feature 004.

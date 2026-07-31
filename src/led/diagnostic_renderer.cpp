@@ -1,8 +1,6 @@
 #include "led/diagnostic_renderer.hpp"
 
 #include <array>
-#include <cstdio>
-
 #include "board/led_board_config.hpp"
 #include "led/diagnostic_rendering.hpp"
 #include "led/led_output_manager.hpp"
@@ -19,7 +17,7 @@ constexpr std::array<uint16_t, board::kStripCount> kInstalledPixelCounts = {
     72,
 };
 constexpr uint8_t kSafeBrightness = 16;
-constexpr uint64_t kRendererIntervalUs = 16667u;
+constexpr uint64_t kRendererIntervalUs = 33334u;
 
 static_assert(board::kStripCount == 6, "Expected six LED strips");
 static_assert(board::kMaxConfiguredPixels == 800, "Unexpected LED pool size");
@@ -109,9 +107,15 @@ void diagnostic_renderer_service() {
 
     const LedStatus status = g_manager.poll_frame_completion();
 
-    if (status != LedStatus::ok && status != LedStatus::busy) {
-        std::printf("LED frame completion failed: status %u\n",
-                    static_cast<unsigned>(status));
+    if (status == LedStatus::busy) {
+        return;
+    }
+
+    g_stats.led_last_status = status;
+    if (status == LedStatus::ok) {
+        ++g_stats.led_frames_completed;
+    } else if (status == LedStatus::transmission_timeout) {
+        ++g_stats.led_frame_timeouts;
     }
 }
 
@@ -124,13 +128,24 @@ void diagnostic_renderer_update(const AudioLevelFrame& audio,
     }
 
     const uint64_t now_us = time_us_64();
+    const bool renderer_update_due =
+        g_enabled && now_us - g_last_update_us >= kRendererIntervalUs;
 
-    if (!diagnostic_frame_should_start(g_enabled, g_manager.is_frame_in_progress(),
-                                       now_us, g_last_update_us,
-                                       kRendererIntervalUs)) {
-        if (g_initialized && g_enabled && g_manager.is_frame_in_progress()) {
-            ++g_stats.skipped_busy_frames;
-        }
+    if (!renderer_update_due) {
+        return;
+    }
+
+    if (g_manager.is_frame_in_progress()) {
+        // One due diagnostic frame could not start. Advance the schedule so
+        // normal-loop polls during the same busy interval do not inflate this
+        // counter.
+        g_last_update_us = now_us;
+        ++g_stats.led_frames_skipped_busy;
+        return;
+    }
+
+    if (!diagnostic_frame_should_start(
+            g_enabled, false, now_us, g_last_update_us, kRendererIntervalUs)) {
         return;
     }
 
@@ -139,12 +154,12 @@ void diagnostic_renderer_update(const AudioLevelFrame& audio,
 
     if (status == LedStatus::ok) {
         g_last_update_us = now_us;
-        ++g_stats.rendered_frames;
+        ++g_stats.led_frames_started;
     } else if (status == LedStatus::busy) {
-        ++g_stats.skipped_busy_frames;
+        g_last_update_us = now_us;
+        ++g_stats.led_frames_skipped_busy;
     } else {
-        std::printf("LED frame start failed: status %u\n",
-                    static_cast<unsigned>(status));
+        g_stats.led_last_status = status;
     }
 }
 

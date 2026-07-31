@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 
 namespace {
 
@@ -12,6 +11,31 @@ namespace {
 // Hann mean-square H produces the same normalized-energy units used by the
 // original float formula: 2 * |DFT|^2 / (1024^2 * H).
 constexpr float kHannPowerNormalization = 0.3746337890625f;
+constexpr uint64_t kHannPowerNumerator = 24552u;
+constexpr uint64_t kHannPowerDenominator = 65536u;
+constexpr uint64_t kReferenceEnergy = 32768u;
+
+uint32_t integer_square_root(uint64_t value) {
+    uint64_t remainder = value;
+    uint64_t root = 0u;
+    uint64_t bit = 1ull << 62u;
+
+    while (bit > remainder) {
+        bit >>= 2u;
+    }
+
+    while (bit != 0u) {
+        if (remainder >= root + bit) {
+            remainder -= root + bit;
+            root = (root >> 1u) + bit;
+        } else {
+            root >>= 1u;
+        }
+        bit >>= 2u;
+    }
+
+    return static_cast<uint32_t>(root);
+}
 
 uint16_t smooth_level(uint16_t target, uint16_t& previous) {
     if (target > previous) {
@@ -28,18 +52,33 @@ uint16_t smooth_level(uint16_t target, uint16_t& previous) {
 uint16_t convert_q15_energy_to_level(uint64_t q15_energy,
                                      uint16_t bin_count,
                                      uint16_t& previous) {
-    // This is intentionally one of only 36 final float conversions. FFT,
-    // power calculation, and bin aggregation are integer-only.
-    const float normalized_energy =
-        static_cast<float>(q15_energy) / kHannPowerNormalization;
-    const float noise_energy =
-        kSpectrumNoiseFloorPerBin * static_cast<float>(bin_count);
-    const float cleaned_energy = std::max(0.0f, normalized_energy - noise_energy);
-    const float normalized_level = 65535.0f * std::sqrt(
-        cleaned_energy * kSpectrumGain / kSpectrumReferenceEnergy);
-    const float clamped_level = std::clamp(normalized_level, 0.0f, 65535.0f);
+    // kHannPowerNormalization is exactly 24552 / 65536. With the approved
+    // gain=1 and reference_energy=32768, this is the existing level formula
+    // evaluated in integer Q32 form, avoiding 36 soft-float square roots per
+    // spectrum window on Cortex-M0+.
+    const uint64_t noise_numerator =
+        kHannPowerNumerator * static_cast<uint64_t>(bin_count);
+    const uint64_t energy_numerator = q15_energy * kHannPowerDenominator;
 
-    return smooth_level(static_cast<uint16_t>(clamped_level), previous);
+    if (energy_numerator <= noise_numerator) {
+        return smooth_level(0u, previous);
+    }
+
+    const uint64_t clean_numerator = energy_numerator - noise_numerator;
+    const uint64_t level_denominator =
+        kHannPowerNumerator * kReferenceEnergy;
+
+    if (clean_numerator >= level_denominator) {
+        return smooth_level(65535u, previous);
+    }
+
+    const uint64_t ratio_q32 =
+        (clean_numerator << 32u) / level_denominator;
+    const uint32_t root_q16 = integer_square_root(ratio_q32);
+    const uint32_t scaled_level =
+        (65535u * root_q16 + 32768u) >> 16u;
+
+    return smooth_level(static_cast<uint16_t>(scaled_level), previous);
 }
 
 uint64_t range_q15_energy(const spectrum_q15::Backend& backend,

@@ -2,12 +2,16 @@
 
 #include "audio/audio_processing.hpp"
 #include "audio/spectrum_analyzer.hpp"
+#include "led/led_status.hpp"
 
 #include <cstdint>
 
 struct DiagnosticRendererStats {
-    uint32_t rendered_frames = 0;
-    uint32_t skipped_busy_frames = 0;
+    uint32_t led_frames_started = 0;
+    uint32_t led_frames_completed = 0;
+    uint32_t led_frame_timeouts = 0;
+    uint32_t led_frames_skipped_busy = 0;
+    LedStatus led_last_status = LedStatus::ok;
 };
 
 // Initializes the fixed, temporary six-strip diagnostic scene. The module is
