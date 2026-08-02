@@ -29,7 +29,7 @@
 - [x] Build Pico W Release firmware and inspect map/flash-table placement.
 - [x] Run all native host targets in a clean native toolchain after the
   dominant-bin plateau correction.
-- [ ] Owner physical validation: Q15 timing, normal continuity counters,
+- [x] Owner physical validation: Q15 timing, normal continuity counters,
   80/300/1000/6000 Hz, quiet/reference input, music, USB logging, and six
   automatic diagnostic views.
 

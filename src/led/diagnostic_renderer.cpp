@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include "board/led_board_config.hpp"
+#include "effects/effect_scenes.hpp"
 #include "led/diagnostic_rendering.hpp"
 #include "led/led_output_manager.hpp"
 #include "pico/time.h"
@@ -29,6 +30,44 @@ DiagnosticRendererStats g_stats;
 bool g_initialized = false;
 bool g_enabled = false;
 uint64_t g_last_update_us = 0;
+uint64_t g_diagnostic_scene_started_us = 0;
+effects::DiagnosticSceneId g_active_diagnostic_scene =
+    effects::DiagnosticSceneId::vu_and_ambient;
+bool g_diagnostic_scenes_enabled = true;
+
+const char* scene_name(effects::DiagnosticSceneId scene) {
+    if (scene == effects::DiagnosticSceneId::vu_and_ambient) {
+        return "vu_ambient";
+    }
+
+    return "spectrum_motion";
+}
+
+void stage_due_diagnostic_scene(uint64_t now_us) {
+    if (!g_diagnostic_scenes_enabled) {
+        return;
+    }
+
+    const uint64_t duration_us = static_cast<uint64_t>(
+        effects::diagnostic_scene_duration_ms(g_active_diagnostic_scene)) * 1000u;
+    if (g_diagnostic_scene_started_us != 0u &&
+        now_us - g_diagnostic_scene_started_us < duration_us) {
+        return;
+    }
+
+    if (g_diagnostic_scene_started_us != 0u) {
+        g_active_diagnostic_scene =
+            effects::next_diagnostic_scene(g_active_diagnostic_scene);
+    }
+
+    if (g_effect_engine.stage_scene(
+            effects::diagnostic_scene(g_active_diagnostic_scene)) ==
+        effects::EffectStatus::ok) {
+        g_diagnostic_scene_started_us = now_us;
+    } else {
+        ++g_stats.effect_frames_failed;
+    }
+}
 
 LogicalRgbwPixels pixels_for_strip(std::size_t strip_index) {
     LedStrip* const strip = g_manager.strip(strip_index);
@@ -149,6 +188,7 @@ void diagnostic_renderer_update(const AudioLevelFrame& audio,
     }
 
     const uint64_t render_start_us = time_us_64();
+    stage_due_diagnostic_scene(render_start_us);
     const effects::EffectInputSnapshot snapshot{
         &audio,
         &spectrum,
@@ -172,6 +212,7 @@ void diagnostic_renderer_update(const AudioLevelFrame& audio,
         ++g_stats.effect_frames_skipped_busy;
     } else {
         g_stats.led_last_status = status;
+        ++g_stats.effect_frames_failed;
     }
 }
 
@@ -192,19 +233,34 @@ bool diagnostic_renderer_read_effect_config(
 effects::EffectStatus diagnostic_renderer_stage_effect_config(
     std::size_t strip_index,
     const effects::StripEffectConfig& config) {
-    return g_effect_engine.stage_strip_config(strip_index, config);
+    const effects::EffectStatus status =
+        g_effect_engine.stage_strip_config(strip_index, config);
+    if (status == effects::EffectStatus::ok) {
+        g_diagnostic_scenes_enabled = false;
+    }
+    return status;
 }
 
 effects::EffectStatus diagnostic_renderer_stage_effect_scene(
     const std::array<effects::StripEffectConfig, effects::kEffectStripCount>& scene) {
-    return g_effect_engine.stage_scene(scene);
+    const effects::EffectStatus status = g_effect_engine.stage_scene(scene);
+    if (status == effects::EffectStatus::ok) {
+        g_diagnostic_scenes_enabled = false;
+    }
+    return status;
 }
 
 bool diagnostic_renderer_restore_default_effect_scene() {
     g_effect_engine.restore_default_scene();
+    g_diagnostic_scenes_enabled = false;
     return true;
 }
 
 uint32_t diagnostic_renderer_configuration_generation() {
     return g_effect_engine.configuration_generation();
+}
+
+const char* diagnostic_renderer_active_scene_name() {
+    return g_diagnostic_scenes_enabled ? scene_name(g_active_diagnostic_scene) :
+                                         "custom_or_reset";
 }

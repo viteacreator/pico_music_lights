@@ -182,8 +182,16 @@ uint16_t smooth_level(uint16_t previous,
     const uint32_t alpha_q8 = std::min<uint32_t>(
         256u, (elapsed * 256u) / (static_cast<uint32_t>(response_ms) + elapsed));
     const int32_t difference = static_cast<int32_t>(target) - previous;
-    const int32_t magnitude =
+    if (difference == 0 || elapsed == 0u) {
+        return previous;
+    }
+
+    int32_t magnitude =
         (std::abs(difference) * static_cast<int32_t>(alpha_q8) + 128) / 256;
+    if (magnitude == 0) {
+        magnitude = 1;
+    }
+
     const int32_t adjustment = difference >= 0 ? magnitude : -magnitude;
     const int32_t result = static_cast<int32_t>(previous) + adjustment;
     return static_cast<uint16_t>(std::clamp<int32_t>(result, 0, 65535));
@@ -233,6 +241,91 @@ bool palette_is_empty(const std::array<RgbwColor, 4>& palette) {
     }
 
     return true;
+}
+
+constexpr uint16_t kRainbowHuePeriod = 1536u;
+constexpr std::array<RgbwColor, 4> kDefaultVuGradient{{
+    {0u, 255u, 0u, 0u},
+    {255u, 255u, 0u, 0u},
+    {255u, 112u, 0u, 0u},
+    {255u, 0u, 0u, 0u},
+}};
+
+RgbwColor rainbow_color(uint16_t hue) {
+    const uint16_t wrapped = static_cast<uint16_t>(hue % kRainbowHuePeriod);
+    const uint8_t segment = static_cast<uint8_t>(wrapped / 256u);
+    const uint8_t fraction = static_cast<uint8_t>(wrapped % 256u);
+
+    switch (segment) {
+    case 0u:
+        return {255u, fraction, 0u, 0u};
+    case 1u:
+        return {static_cast<uint8_t>(255u - fraction), 255u, 0u, 0u};
+    case 2u:
+        return {0u, 255u, fraction, 0u};
+    case 3u:
+        return {0u, static_cast<uint8_t>(255u - fraction), 255u, 0u};
+    case 4u:
+        return {fraction, 0u, 255u, 0u};
+    default:
+        return {255u, 0u, static_cast<uint8_t>(255u - fraction), 0u};
+    }
+}
+
+void advance_vu_rainbow_phase(StripEffectState& state,
+                              uint16_t speed_q8,
+                              uint32_t elapsed) {
+    const uint32_t increment =
+        (static_cast<uint32_t>(speed_q8) * elapsed + 128u) / 256u;
+    state.animation_phase = static_cast<uint16_t>(
+        (state.animation_phase + increment) % kRainbowHuePeriod);
+}
+
+RgbwColor vu_gradient_color(const StripEffectConfig& config,
+                            std::size_t distance_from_origin,
+                            std::size_t capacity) {
+    const std::array<RgbwColor, 4>& palette = palette_is_empty(config.palette)
+                                                   ? kDefaultVuGradient
+                                                   : config.palette;
+    if (capacity <= 1u) {
+        return palette.front();
+    }
+
+    const std::size_t clamped_distance = std::min(
+        distance_from_origin, capacity - 1u);
+    const std::size_t scaled = clamped_distance * (palette.size() - 1u) *
+                               65535u / (capacity - 1u);
+    const std::size_t first = scaled / 65535u;
+    const uint16_t fraction = static_cast<uint16_t>(scaled % 65535u);
+    return interpolate_color(palette[first],
+                             palette[std::min(first + 1u, palette.size() - 1u)],
+                             fraction);
+}
+
+RgbwColor vu_color(const StripEffectRuntime& runtime,
+                   RgbwColor solid_color,
+                   std::size_t distance_from_origin,
+                   std::size_t capacity) {
+    switch (runtime.config.vu_color_mode) {
+    case VuColorMode::solid:
+        return solid_color;
+
+    case VuColorMode::level_position_gradient:
+        return vu_gradient_color(runtime.config, distance_from_origin, capacity);
+
+    case VuColorMode::animated_rainbow: {
+        const uint32_t spacing = static_cast<uint32_t>(distance_from_origin) *
+                                 runtime.config.color_spacing_q8;
+        const uint16_t hue_offset = static_cast<uint16_t>(
+            ((spacing + 128u) / 256u) % kRainbowHuePeriod);
+        const uint16_t hue = static_cast<uint16_t>(
+            (static_cast<uint32_t>(runtime.state.animation_phase) + hue_offset) %
+            kRainbowHuePeriod);
+        return rainbow_color(hue);
+    }
+    }
+
+    return solid_color;
 }
 
 RgbwColor spectrum_color(const StripEffectConfig& config,
@@ -302,11 +395,20 @@ void render_scalar_vu(StripEffectRuntime& runtime,
                                         scalar_level(runtime.config.source, snapshot),
                                         elapsed);
     const std::size_t lit = lit_count(destination.pixel_count, level);
+    if (runtime.config.vu_color_mode == VuColorMode::animated_rainbow) {
+        advance_vu_rainbow_phase(runtime.state,
+                                  runtime.config.animation_speed_q8,
+                                  elapsed);
+    }
+
     for (std::size_t index = 0; index < lit; ++index) {
         write_pixel(destination,
                     runtime.config.reversed,
                     index,
-                    runtime.config.primary_color);
+                    vu_color(runtime,
+                             runtime.config.primary_color,
+                             index,
+                             destination.pixel_count));
     }
 }
 
@@ -330,18 +432,30 @@ void render_stereo_vu(StripEffectRuntime& runtime,
     const std::size_t centre_left = (destination.pixel_count - 1u) / 2u;
     const std::size_t centre_right = (destination.pixel_count + 1u) / 2u;
 
+    if (runtime.config.vu_color_mode == VuColorMode::animated_rainbow) {
+        advance_vu_rainbow_phase(runtime.state,
+                                  runtime.config.animation_speed_q8,
+                                  elapsed);
+    }
+
     for (std::size_t step = 0; step < left_lit; ++step) {
         write_pixel(destination,
                     runtime.config.reversed,
                     centre_left - step,
-                    runtime.config.primary_color);
+                    vu_color(runtime,
+                             runtime.config.primary_color,
+                             step,
+                             left_capacity));
     }
 
     for (std::size_t step = 0; step < right_lit; ++step) {
         write_pixel(destination,
                     runtime.config.reversed,
                     centre_right + step,
-                    runtime.config.secondary_color);
+                    vu_color(runtime,
+                             runtime.config.secondary_color,
+                             step,
+                             right_capacity));
     }
 }
 
@@ -358,16 +472,22 @@ void render_spectrum_bars(StripEffectRuntime& runtime,
 
     resample_raw_spectrum(snapshot.spectrum, segments.data(), segment_count);
 
+    std::array<uint16_t, kSpectrumBandCount> smoothed_segments{};
+    for (std::size_t source_segment = 0u;
+         source_segment < segment_count;
+         ++source_segment) {
+        smoothed_segments[source_segment] = update_level(runtime,
+                                                          source_segment,
+                                                          segments[source_segment],
+                                                          elapsed);
+    }
+
     for (std::size_t pixel = 0; pixel < destination.pixel_count; ++pixel) {
         const std::size_t physical_segment = pixel * segment_count /
                                              destination.pixel_count;
         const std::size_t source_segment = runtime.config.reversed
                                                ? segment_count - 1u - physical_segment
                                                : physical_segment;
-        const uint16_t level = update_level(runtime,
-                                            source_segment,
-                                            segments[source_segment],
-                                            elapsed);
         write_pixel(destination,
                     false,
                     pixel,
@@ -375,7 +495,7 @@ void render_spectrum_bars(StripEffectRuntime& runtime,
                                                source_segment,
                                                segment_count),
                                 runtime.config.background_color,
-                                level));
+                                smoothed_segments[source_segment]));
     }
 }
 
@@ -391,6 +511,16 @@ void render_mirrored_zones(StripEffectRuntime& runtime,
     }
 
     resample_raw_spectrum(snapshot.spectrum, zones.data(), zone_count);
+    std::array<uint16_t, kSpectrumBandCount> smoothed_zones{};
+    for (std::size_t source_zone = 0u;
+         source_zone < zone_count;
+         ++source_zone) {
+        smoothed_zones[source_zone] = update_level(runtime,
+                                                    source_zone,
+                                                    zones[source_zone],
+                                                    elapsed);
+    }
+
     const std::size_t half_span = (destination.pixel_count + 1u) / 2u;
 
     for (std::size_t pixel = 0; pixel < destination.pixel_count; ++pixel) {
@@ -402,10 +532,6 @@ void render_mirrored_zones(StripEffectRuntime& runtime,
         const std::size_t source_zone = runtime.config.reversed
                                             ? zone_count - 1u - zone_from_end
                                             : zone_from_end;
-        const uint16_t level = update_level(runtime,
-                                            source_zone,
-                                            zones[source_zone],
-                                            elapsed);
         write_pixel(destination,
                     false,
                     pixel,
@@ -413,7 +539,7 @@ void render_mirrored_zones(StripEffectRuntime& runtime,
                                                source_zone,
                                                zone_count),
                                 runtime.config.background_color,
-                                level));
+                                smoothed_zones[source_zone]));
     }
 }
 
@@ -434,6 +560,17 @@ void render_macro_bands(StripEffectRuntime& runtime,
         return;
     }
 
+    std::array<uint16_t, 4> smoothed_regions{};
+    for (std::size_t region = 0u; region < region_count; ++region) {
+        const std::size_t source_region = region_count == 3u && region != 0u
+                                              ? region + 1u
+                                              : region;
+        smoothed_regions[region] = update_level(runtime,
+                                                region,
+                                                levels[source_region],
+                                                elapsed);
+    }
+
     for (std::size_t pixel = 0; pixel < destination.pixel_count; ++pixel) {
         const std::size_t mapped_pixel = runtime.config.reversed
                                              ? destination.pixel_count - 1u - pixel
@@ -441,19 +578,191 @@ void render_macro_bands(StripEffectRuntime& runtime,
         const std::size_t region = std::min(
             region_count - 1u,
             mapped_pixel * region_count / destination.pixel_count);
-        const std::size_t source_region = region_count == 3u && region != 0u
-                                              ? region + 1u
-                                              : region;
-        const uint16_t level = update_level(runtime,
-                                            region,
-                                            levels[source_region],
-                                            elapsed);
         write_pixel(destination,
                     false,
                     pixel,
                     level_color(runtime.config.palette[region],
                                 runtime.config.background_color,
-                                level));
+                                smoothed_regions[region]));
+    }
+}
+
+uint16_t selected_frequency_level(FrequencySelection selection,
+                                  const EffectInputSnapshot& snapshot) {
+    if (snapshot.spectrum == nullptr) {
+        return 0u;
+    }
+
+    switch (selection) {
+    case FrequencySelection::three_frequencies:
+        return std::max({snapshot.spectrum->raw_low,
+                         snapshot.spectrum->raw_mid,
+                         snapshot.spectrum->raw_high});
+
+    case FrequencySelection::low:
+        return snapshot.spectrum->raw_low;
+
+    case FrequencySelection::mid:
+        return snapshot.spectrum->raw_mid;
+
+    case FrequencySelection::high:
+        return snapshot.spectrum->raw_high;
+    }
+
+    return 0u;
+}
+
+void advance_animation_phase(StripEffectRuntime& runtime, uint32_t elapsed) {
+    const uint32_t phase_increment =
+        (static_cast<uint32_t>(runtime.config.animation_speed_q8) * elapsed +
+         128u) /
+        256u;
+    runtime.state.animation_phase = static_cast<uint16_t>(
+        (runtime.state.animation_phase + phase_increment) % kRainbowHuePeriod);
+}
+
+uint16_t pixel_hue_offset(const StripEffectConfig& config,
+                          std::size_t pixel) {
+    return static_cast<uint16_t>(
+        ((static_cast<uint32_t>(pixel) * config.color_spacing_q8 + 128u) / 256u) %
+        kRainbowHuePeriod);
+}
+
+void render_one_band_frequency(StripEffectRuntime& runtime,
+                               const EffectInputSnapshot& snapshot,
+                               EffectRenderSpan destination,
+                               uint32_t elapsed) {
+    const uint16_t level = update_level(runtime,
+                                        0u,
+                                        selected_frequency_level(
+                                            runtime.config.frequency_selection,
+                                            snapshot),
+                                        elapsed);
+    fill_span(destination,
+              level_color(runtime.config.primary_color,
+                          runtime.config.background_color,
+                          level));
+}
+
+void render_stroboscope(StripEffectRuntime& runtime,
+                        EffectRenderSpan destination,
+                        uint32_t elapsed) {
+    // ColorMusic's stroboscope is a timed lighting mode. It deliberately has
+    // no audio source; brightness comes from the time gate alone.
+    const uint16_t target = saturating_gain(65535u,
+                                            runtime.config.visual_gain);
+    const uint32_t cycle_ms = runtime.config.strobe_frequency_hz == 0u
+                                  ? 1000u
+                                  : 1000u / runtime.config.strobe_frequency_hz;
+    const uint32_t phase_increment = cycle_ms == 0u
+                                         ? 0u
+                                         : (elapsed * 65535u + cycle_ms / 2u) /
+                                               cycle_ms;
+    runtime.state.strobe_phase = static_cast<uint16_t>(
+        runtime.state.strobe_phase + phase_increment);
+
+    const uint32_t fade_fraction = std::min<uint32_t>(
+        65535u,
+        (static_cast<uint32_t>(runtime.config.strobe_fade_ms) * 65535u +
+         cycle_ms / 2u) /
+            std::max<uint32_t>(1u, cycle_ms));
+    uint16_t gate = 0u;
+    if (runtime.state.strobe_phase < fade_fraction) {
+        gate = fade_fraction == 0u
+                   ? 65535u
+                   : static_cast<uint16_t>(
+                         65535u - static_cast<uint32_t>(runtime.state.strobe_phase) *
+                                      65535u / fade_fraction);
+    }
+
+    runtime.state.strobe_level = static_cast<uint16_t>(
+        (static_cast<uint32_t>(target) * gate + 32767u) / 65535u);
+    fill_span(destination,
+              level_color(runtime.config.primary_color,
+                          runtime.config.background_color,
+                          runtime.state.strobe_level));
+}
+
+void render_ambient_color_cycle(StripEffectRuntime& runtime,
+                                EffectRenderSpan destination,
+                                uint32_t elapsed) {
+    advance_animation_phase(runtime, elapsed);
+    fill_span(destination,
+              scale_color(rainbow_color(runtime.state.animation_phase),
+                          saturating_gain(65535u,
+                                          runtime.config.visual_gain)));
+}
+
+void render_running_rainbow(StripEffectRuntime& runtime,
+                            EffectRenderSpan destination,
+                            uint32_t elapsed) {
+    advance_animation_phase(runtime, elapsed);
+    for (std::size_t pixel = 0u; pixel < destination.pixel_count; ++pixel) {
+        const std::size_t gradient_pixel = runtime.config.reversed
+                                               ? destination.pixel_count - 1u - pixel
+                                               : pixel;
+        const uint16_t hue = static_cast<uint16_t>(
+            (static_cast<uint32_t>(runtime.state.animation_phase) +
+             pixel_hue_offset(runtime.config, gradient_pixel)) %
+            kRainbowHuePeriod);
+        write_pixel(destination,
+                    false,
+                    pixel,
+                    scale_color(rainbow_color(hue),
+                                saturating_gain(65535u,
+                                                runtime.config.visual_gain)));
+    }
+}
+
+void render_running_frequency(StripEffectRuntime& runtime,
+                              const EffectInputSnapshot& snapshot,
+                              EffectRenderSpan destination,
+                              uint32_t elapsed) {
+    fill_span(destination, runtime.config.background_color);
+    if (destination.pixel_count == 0u) {
+        return;
+    }
+
+    const uint16_t target = saturating_gain(
+        selected_frequency_level(runtime.config.frequency_selection, snapshot),
+        runtime.config.visual_gain);
+    const uint32_t decay_period = std::max<uint32_t>(1u, runtime.config.fade_decay_ms);
+    const uint32_t retained_q16 = elapsed >= decay_period
+                                      ? 0u
+                                      : (decay_period - elapsed) * 65535u /
+                                            decay_period;
+    runtime.state.running_level = static_cast<uint16_t>(std::max<uint32_t>(
+        target,
+        (static_cast<uint32_t>(runtime.state.running_level) * retained_q16 +
+         32767u) /
+            65535u));
+
+    const uint32_t position_increment =
+        (static_cast<uint32_t>(runtime.config.animation_speed_q8) * elapsed +
+         128u) /
+        256u;
+    const uint32_t span_q8 = static_cast<uint32_t>(destination.pixel_count) * 256u;
+    runtime.state.running_position = static_cast<uint32_t>(
+        (static_cast<uint32_t>(runtime.state.running_position) + position_increment) %
+        span_q8);
+    const std::size_t head = runtime.state.running_position / 256u;
+
+    for (std::size_t pixel = 0u; pixel < destination.pixel_count; ++pixel) {
+        const std::size_t distance = runtime.config.reversed
+                                         ? (head + destination.pixel_count - pixel) %
+                                               destination.pixel_count
+                                         : (pixel + destination.pixel_count - head) %
+                                               destination.pixel_count;
+        const uint16_t trail = static_cast<uint16_t>(
+            (static_cast<uint32_t>(runtime.state.running_level) *
+             (destination.pixel_count - distance) + destination.pixel_count / 2u) /
+            destination.pixel_count);
+        write_pixel(destination,
+                    false,
+                    pixel,
+                    level_color(runtime.config.primary_color,
+                                runtime.config.background_color,
+                                trail));
     }
 }
 
@@ -508,6 +817,26 @@ void render_effect(StripEffectRuntime& runtime,
 
     case EffectType::macro_bands:
         render_macro_bands(runtime, snapshot, destination, elapsed);
+        return;
+
+    case EffectType::one_band_frequency:
+        render_one_band_frequency(runtime, snapshot, destination, elapsed);
+        return;
+
+    case EffectType::stroboscope:
+        render_stroboscope(runtime, destination, elapsed);
+        return;
+
+    case EffectType::ambient_color_cycle:
+        render_ambient_color_cycle(runtime, destination, elapsed);
+        return;
+
+    case EffectType::running_rainbow:
+        render_running_rainbow(runtime, destination, elapsed);
+        return;
+
+    case EffectType::running_frequency:
+        render_running_frequency(runtime, snapshot, destination, elapsed);
         return;
     }
 }

@@ -24,6 +24,24 @@ enum class EffectType : uint8_t {
     spectrum_bars,
     mirrored_spectrum_zones,
     macro_bands,
+    one_band_frequency,
+    stroboscope,
+    ambient_color_cycle,
+    running_rainbow,
+    running_frequency,
+};
+
+enum class VuColorMode : uint8_t {
+    solid,
+    level_position_gradient,
+    animated_rainbow,
+};
+
+enum class FrequencySelection : uint8_t {
+    three_frequencies,
+    low,
+    mid,
+    high,
 };
 
 enum class EffectSource : uint8_t {
@@ -71,6 +89,14 @@ struct StripEffectConfig {
     // White Boost accepts 0..200. Its RGB assist must have white == 0.
     uint16_t white_drive_percent = 100u;
     RgbwColor rgb_assist_color{255, 255, 255, 0};
+    VuColorMode vu_color_mode = VuColorMode::solid;
+    FrequencySelection frequency_selection = FrequencySelection::three_frequencies;
+    // Q8 phase increments per millisecond and Q8 pixel hue spacing.
+    uint16_t animation_speed_q8 = 256u;
+    uint16_t color_spacing_q8 = 256u;
+    uint16_t fade_decay_ms = 180u;
+    uint8_t strobe_frequency_hz = 8u;
+    uint16_t strobe_fade_ms = 40u;
     bool reversed = false;
     uint16_t visual_gain = kEffectUnityGain;
     uint16_t attack_ms = 0;
@@ -87,6 +113,12 @@ struct StripEffectState {
     std::array<uint16_t, 32> smoothed_levels{};
     uint64_t last_render_us = 0;
     uint32_t last_input_sequence = 0;
+    uint16_t animation_phase = 0;
+    uint16_t strobe_phase = 0;
+    uint16_t strobe_level = 0;
+    // Q8 pixel position; 32 bits cover the full 300-pixel strip span.
+    uint32_t running_position = 0;
+    uint16_t running_level = 0;
     bool initialized = false;
 };
 

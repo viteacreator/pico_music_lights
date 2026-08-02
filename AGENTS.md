@@ -14,6 +14,9 @@
 - Keep effect state independent for every strip. Effects consume shared,
   read-only audio and spectrum frames; they must not embed physical strip
   numbers or access hardware.
+- Update temporal smoothing state once per logical source segment or zone per
+  rendered frame. Pixel loops must consume the cached result, so response does
+  not depend on strip length.
 - Validate effect configuration changes before applying them atomically at a
   render boundary. Do not allocate memory dynamically in the real-time render
   path.

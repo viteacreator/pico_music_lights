@@ -16,7 +16,10 @@ constexpr uint32_t kAudioAggregateSampleRate = 96'000u;
 constexpr uint32_t kMonoSampleRate = 32'000u;
 constexpr uint32_t kSpectrumOverlapPercent = 50u;
 constexpr std::size_t kTelemetryBufferSize = 512u;
-constexpr std::size_t kStartupBufferSize = 320u;
+// The Feature 004 default-scene line makes the deferred startup report larger
+// than the previous 320-byte buffer. Keep it below the bounded 512-byte USB
+// CDC transmit buffer so startup acknowledgement cannot suppress telemetry.
+constexpr std::size_t kStartupBufferSize = 512u;
 
 AudioLevelFrame g_audio_frame{};
 CenteredMonoBlock g_centered_mono{};
@@ -31,13 +34,6 @@ uint32_t g_maximum_audio_work_us = 0;
 bool g_renderer_available = false;
 bool g_startup_report_delivered = false;
 
-uint32_t dominant_frequency_hz(uint16_t bin) {
-    return static_cast<uint32_t>(
-        (static_cast<uint32_t>(bin) * kMonoSampleRate +
-         (kSpectrumWindowSamples / 2u)) /
-        kSpectrumWindowSamples);
-}
-
 void prepare_startup_report() {
     const int length = std::snprintf(
         g_startup_report.data(),
@@ -46,7 +42,7 @@ void prepare_startup_report() {
         "aggregate_hz=%lu mono_hz=%lu fft_size=%u overlap_pct=%lu backend=q15 "
         "noise_floor=1 gain=1 reference_energy=32768 renderer_enabled=%s\n"
         "DBG pixels=132,174,141,81,96,72 order=GRBW brightness=16\n"
-        "DBG effects=1:spectrum16,2:mirror5,3:macro4,4:stereo,5:mono_vu,6:aux_vu generation=%lu\n",
+        "DBG reset_default=6x_stereo_vu_gradient diagnostic_scene=%s cycle_s=12 generation=%lu\n",
         PICO_PROGRAM_VERSION_STRING,
         g_renderer_available ? "ok" : "unavailable",
         static_cast<unsigned>(diagnostic_renderer_usable_strip_count()),
@@ -55,6 +51,7 @@ void prepare_startup_report() {
         static_cast<unsigned>(kSpectrumWindowSamples),
         static_cast<unsigned long>(kSpectrumOverlapPercent),
         diagnostic_renderer_is_enabled() ? "yes" : "no",
+        diagnostic_renderer_active_scene_name(),
         static_cast<unsigned long>(
             diagnostic_renderer_configuration_generation()));
 
@@ -81,36 +78,17 @@ bool try_deliver_startup_report() {
     return true;
 }
 
-uint64_t normalized_power_to_milli(float power) {
-    if (power <= 0.0f) {
-        return 0u;
-    }
-
-    return static_cast<uint64_t>(power * 1000.0f + 0.5f);
-}
-
 void print_telemetry() {
-    const SpectrumDiagnostics& raw = g_spectrum_analyzer.diagnostics();
     const DiagnosticRendererStats& renderer = diagnostic_renderer_stats();
-    const uint64_t mean_power_milli = normalized_power_to_milli(
-        raw.positive_bin_energy /
-        static_cast<float>(kSpectrumPositiveBinLimit));
-    const uint64_t maximum_power_milli = normalized_power_to_milli(
-        raw.dominant_bin_power);
-
     const int length = std::snprintf(
         g_telemetry_line.data(),
         g_telemetry_line.size(),
-        "DBG t_ms=%llu audio_seq=%lu L=%u R=%u Aux=%u Mono=%u adc_drop=%lu "
+        "DBG audio_seq=%lu L=%u R=%u Aux=%u Mono=%u adc_drop=%lu "
         "adc_over=%lu adc_under=%lu spectrum_seq=%lu bass=%u low=%u mid=%u high=%u "
         "fft_us=%lu fft_max_us=%lu dropped_windows=%lu missing_audio_blocks=%lu "
-        "audio_work_us=%lu audio_work_max_us=%lu "
-        "raw_mean_milli=%llu raw_max_milli=%llu dominant_bin=%u dominant_hz=%lu renderer=%s "
-        "led_frames_started=%lu led_frames_completed=%lu led_frame_timeouts=%lu "
-        "led_last_status=%u led_frames_skipped_busy=%lu effect_config_generation=%lu "
-        "effect_frames_started=%lu effect_frames_completed=%lu "
-        "effect_frames_skipped_busy=%lu effect_render_us=%lu effect_render_max_us=%lu\n",
-        static_cast<unsigned long long>(time_us_64() / 1000u),
+        "audio_work_us=%lu audio_work_max_us=%lu scene=%s cfg_gen=%lu "
+        "effect_us=%lu effect_max_us=%lu effect_skip=%lu effect_fail=%lu "
+        "led_frame_timeouts=%lu\n",
         static_cast<unsigned long>(g_audio_frame.sequence),
         g_audio_frame.left,
         g_audio_frame.right,
@@ -130,23 +108,13 @@ void print_telemetry() {
         static_cast<unsigned long>(g_spectrum_frame.missing_audio_blocks),
         static_cast<unsigned long>(g_audio_work_us),
         static_cast<unsigned long>(g_maximum_audio_work_us),
-        static_cast<unsigned long long>(mean_power_milli),
-        static_cast<unsigned long long>(maximum_power_milli),
-        static_cast<unsigned>(raw.dominant_bin),
-        static_cast<unsigned long>(dominant_frequency_hz(raw.dominant_bin)),
-        g_renderer_available ? "ok" : "unavailable",
-        static_cast<unsigned long>(renderer.led_frames_started),
-        static_cast<unsigned long>(renderer.led_frames_completed),
-        static_cast<unsigned long>(renderer.led_frame_timeouts),
-        static_cast<unsigned>(renderer.led_last_status),
-        static_cast<unsigned long>(renderer.led_frames_skipped_busy),
-        static_cast<unsigned long>(
-            diagnostic_renderer_configuration_generation()),
-        static_cast<unsigned long>(renderer.effect_frames_started),
-        static_cast<unsigned long>(renderer.effect_frames_completed),
-        static_cast<unsigned long>(renderer.effect_frames_skipped_busy),
+        diagnostic_renderer_active_scene_name(),
+        static_cast<unsigned long>(diagnostic_renderer_configuration_generation()),
         static_cast<unsigned long>(renderer.effect_render_us),
-        static_cast<unsigned long>(renderer.effect_render_max_us));
+        static_cast<unsigned long>(renderer.effect_render_max_us),
+        static_cast<unsigned long>(renderer.effect_frames_skipped_busy),
+        static_cast<unsigned long>(renderer.effect_frames_failed),
+        static_cast<unsigned long>(renderer.led_frame_timeouts));
 
     if (length <= 0 ||
         static_cast<std::size_t>(length) >= g_telemetry_line.size() ||

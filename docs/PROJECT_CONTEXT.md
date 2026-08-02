@@ -193,6 +193,24 @@ The normal renderer skips a due frame if LED transport is busy, rather than
 compromising audio continuity. Wi-Fi, web configuration and persistence will
 use the engine's application-facing configuration API in later features.
 
+The named future reset-default scene deliberately contains six value-copied, independent
+Stereo Centre-Out VU configurations. Each uses the shared Left/Right source,
+Off background, and a logical centre-to-end Green → Yellow → Orange → Red
+gradient. This is a default scene only: no physical strip is a master and every
+strip may later select any compatible effect and parameters independently.
+
+Feature 004 physical bring-up uses a separate, temporary, atomic diagnostic
+scene sequence rather than this reset scene. The sequence alternates timed
+VU/ambient and spectrum/motion scenes across the six strips, and can be
+disabled by explicitly staging a custom scene or restoring the reset-default
+scene.
+
+The reusable Feature 004 catalog covers static RGBW/White Boost, solid,
+gradient and rainbow VU modes, mirrored/macro/one-band/spectrum frequency
+views, stroboscope, smooth colour cycle, running rainbow, and running
+frequencies. These are inspired by the user-visible AlexGyver ColorMusic modes,
+not a port of its Arduino hardware implementation.
+
 The internal pixel representation shall preserve all four physical channels.
 
 Effects shall render RGBW values, not RGB values with an artificial alpha channel.

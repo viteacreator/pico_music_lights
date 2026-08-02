@@ -1,11 +1,16 @@
 #include "effects/effect_engine.hpp"
+#include "effects/effect_scenes.hpp"
 
 namespace effects {
 
 namespace {
 
+constexpr uint16_t kMaximumAnimationSpeedQ8 = 4096u;
+constexpr uint16_t kMaximumColorSpacingQ8 = 4096u;
+constexpr uint8_t kMaximumStrobeFrequencyHz = 30u;
+
 bool is_valid_effect_type(EffectType type) {
-    return type <= EffectType::macro_bands;
+    return type <= EffectType::running_frequency;
 }
 
 bool is_valid_effect_source(EffectSource source) {
@@ -14,6 +19,14 @@ bool is_valid_effect_source(EffectSource source) {
 
 bool is_valid_static_color_mode(StaticColorMode mode) {
     return mode <= StaticColorMode::white_boost;
+}
+
+bool is_valid_vu_color_mode(VuColorMode mode) {
+    return mode <= VuColorMode::animated_rainbow;
+}
+
+bool is_valid_frequency_selection(FrequencySelection selection) {
+    return selection <= FrequencySelection::high;
 }
 
 bool requires_state_reset(const StripEffectConfig& active,
@@ -36,6 +49,18 @@ bool requires_state_reset(const StripEffectConfig& active,
 
     if (active.type == EffectType::macro_bands &&
         active.macro_region_count != proposed.macro_region_count) {
+        return true;
+    }
+
+    if ((active.type == EffectType::scalar_vu ||
+         active.type == EffectType::stereo_center_out_vu) &&
+        active.vu_color_mode != proposed.vu_color_mode) {
+        return true;
+    }
+
+    if ((active.type == EffectType::one_band_frequency ||
+         active.type == EffectType::running_frequency) &&
+        active.frequency_selection != proposed.frequency_selection) {
         return true;
     }
 
@@ -69,6 +94,15 @@ bool is_source_compatible(const StripEffectConfig& config) {
 
     case EffectType::macro_bands:
         return config.source == EffectSource::macro_bands;
+
+    case EffectType::one_band_frequency:
+    case EffectType::running_frequency:
+        return config.source == EffectSource::macro_bands;
+
+    case EffectType::stroboscope:
+    case EffectType::ambient_color_cycle:
+    case EffectType::running_rainbow:
+        return config.source == EffectSource::none;
     }
 
     return false;
@@ -111,13 +145,28 @@ EffectStatus EffectEngine::validate_config(const StripEffectConfig& config) cons
         return EffectStatus::invalid_static_color_mode;
     }
 
+    if (!is_valid_vu_color_mode(config.vu_color_mode) ||
+        !is_valid_frequency_selection(config.frequency_selection)) {
+        return EffectStatus::invalid_parameter;
+    }
+
     if (!is_source_compatible(config)) {
         return EffectStatus::incompatible_source;
     }
 
     if (config.visual_gain > kEffectMaximumGain ||
         config.attack_ms > kEffectMaximumResponseMs ||
-        config.release_ms > kEffectMaximumResponseMs) {
+        config.release_ms > kEffectMaximumResponseMs ||
+        config.fade_decay_ms > kEffectMaximumResponseMs ||
+        config.animation_speed_q8 > kMaximumAnimationSpeedQ8 ||
+        config.color_spacing_q8 > kMaximumColorSpacingQ8 ||
+        config.strobe_fade_ms > kEffectMaximumResponseMs) {
+        return EffectStatus::invalid_parameter;
+    }
+
+    if (config.type == EffectType::stroboscope &&
+        (config.strobe_frequency_hz == 0u ||
+         config.strobe_frequency_hz > kMaximumStrobeFrequencyHz)) {
         return EffectStatus::invalid_parameter;
     }
 
@@ -239,59 +288,7 @@ void EffectEngine::render(
 }
 
 std::array<StripEffectConfig, kEffectStripCount> EffectEngine::default_scene() {
-    std::array<StripEffectConfig, kEffectStripCount> scene{};
-
-    scene[0] = {
-        true,
-        EffectType::spectrum_bars,
-        EffectSource::spectrum_32,
-        {0, 0, 255, 0},
-        {255, 0, 0, 0},
-        {0, 0, 0, 0},
-        {{{0, 0, 160, 96}, {0, 200, 255, 0}, {0, 255, 32, 0}, {255, 32, 0, 0}}},
-        StaticColorMode::direct_rgbw,
-        100u,
-        {255, 255, 255, 0},
-        false,
-        kEffectUnityGain,
-        60u,
-        180u,
-        16u,
-        5u,
-        4u,
-    };
-    scene[1] = scene[0];
-    scene[1].type = EffectType::mirrored_spectrum_zones;
-    scene[1].zone_count = 5u;
-
-    scene[2] = scene[0];
-    scene[2].type = EffectType::macro_bands;
-    scene[2].source = EffectSource::macro_bands;
-    scene[2].primary_color = {255, 0, 0, 0};
-    scene[2].secondary_color = {0, 255, 0, 0};
-    scene[2].palette = {{{255, 0, 0, 0}, {255, 160, 0, 0},
-                         {0, 255, 0, 0}, {0, 0, 255, 0}}};
-
-    scene[3] = scene[0];
-    scene[3].type = EffectType::stereo_center_out_vu;
-    scene[3].source = EffectSource::stereo_left_right;
-    scene[3].primary_color = {0, 255, 0, 0};
-    scene[3].secondary_color = {255, 0, 0, 0};
-    scene[3].attack_ms = 40u;
-    scene[3].release_ms = 140u;
-
-    scene[4] = scene[0];
-    scene[4].type = EffectType::scalar_vu;
-    scene[4].source = EffectSource::mono;
-    scene[4].primary_color = {0, 0, 255, 0};
-    scene[4].attack_ms = 40u;
-    scene[4].release_ms = 140u;
-
-    scene[5] = scene[4];
-    scene[5].source = EffectSource::aux;
-    scene[5].primary_color = {255, 255, 255, 0};
-
-    return scene;
+    return reset_default_scene();
 }
 
 void EffectEngine::reset_state(StripEffectState& state) {

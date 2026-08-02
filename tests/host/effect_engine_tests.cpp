@@ -1,4 +1,5 @@
 #include "effects/effect_engine.hpp"
+#include "effects/effect_scenes.hpp"
 
 #include <array>
 #include <cstddef>
@@ -12,8 +13,10 @@ using effects::EffectRenderSpan;
 using effects::EffectSource;
 using effects::EffectStatus;
 using effects::EffectType;
+using effects::FrequencySelection;
 using effects::StaticColorMode;
 using effects::StripEffectConfig;
+using effects::VuColorMode;
 
 constexpr RgbwColor kOff{0, 0, 0, 0};
 constexpr RgbwColor kRed{255, 0, 0, 0};
@@ -28,6 +31,41 @@ bool colors_equal(RgbwColor first, RgbwColor second) {
 
 bool is_off(RgbwColor color) {
     return colors_equal(color, kOff);
+}
+
+bool configurations_equal(const StripEffectConfig& first,
+                          const StripEffectConfig& second) {
+    bool palettes_equal = true;
+    for (std::size_t index = 0u; index < first.palette.size(); ++index) {
+        if (!colors_equal(first.palette[index], second.palette[index])) {
+            palettes_equal = false;
+            break;
+        }
+    }
+
+    return first.enabled == second.enabled && first.type == second.type &&
+           first.source == second.source &&
+           colors_equal(first.primary_color, second.primary_color) &&
+           colors_equal(first.secondary_color, second.secondary_color) &&
+           colors_equal(first.background_color, second.background_color) &&
+           palettes_equal &&
+           first.static_color_mode == second.static_color_mode &&
+           first.white_drive_percent == second.white_drive_percent &&
+           colors_equal(first.rgb_assist_color, second.rgb_assist_color) &&
+           first.vu_color_mode == second.vu_color_mode &&
+           first.frequency_selection == second.frequency_selection &&
+           first.animation_speed_q8 == second.animation_speed_q8 &&
+           first.color_spacing_q8 == second.color_spacing_q8 &&
+           first.fade_decay_ms == second.fade_decay_ms &&
+           first.strobe_frequency_hz == second.strobe_frequency_hz &&
+           first.strobe_fade_ms == second.strobe_fade_ms &&
+           first.reversed == second.reversed &&
+           first.visual_gain == second.visual_gain &&
+           first.attack_ms == second.attack_ms &&
+           first.release_ms == second.release_ms &&
+           first.segment_count == second.segment_count &&
+           first.zone_count == second.zone_count &&
+           first.macro_region_count == second.macro_region_count;
 }
 
 std::array<StripEffectConfig, effects::kEffectStripCount> off_scene() {
@@ -69,27 +107,24 @@ bool test_default_scene_and_configuration_api() {
         return false;
     }
 
-    constexpr std::array<EffectType, effects::kEffectStripCount> kTypes{{
-        EffectType::spectrum_bars,
-        EffectType::mirrored_spectrum_zones,
-        EffectType::macro_bands,
-        EffectType::stereo_center_out_vu,
-        EffectType::scalar_vu,
-        EffectType::scalar_vu,
-    }};
-    constexpr std::array<EffectSource, effects::kEffectStripCount> kSources{{
-        EffectSource::spectrum_32,
-        EffectSource::spectrum_32,
-        EffectSource::macro_bands,
-        EffectSource::stereo_left_right,
-        EffectSource::mono,
-        EffectSource::aux,
-    }};
+    StripEffectConfig canonical{};
+    if (!engine.read_config(0u, canonical) || !canonical.enabled ||
+        canonical.type != EffectType::stereo_center_out_vu ||
+        canonical.source != EffectSource::stereo_left_right ||
+        canonical.vu_color_mode != VuColorMode::level_position_gradient ||
+        !is_off(canonical.background_color) || canonical.attack_ms == 0u ||
+        canonical.release_ms == 0u ||
+        !colors_equal(canonical.palette[0], kGreen) ||
+        !colors_equal(canonical.palette[1], {255, 255, 0, 0}) ||
+        !colors_equal(canonical.palette[2], {255, 128, 0, 0}) ||
+        !colors_equal(canonical.palette[3], kRed)) {
+        return false;
+    }
 
     for (std::size_t index = 0; index < effects::kEffectStripCount; ++index) {
         StripEffectConfig config{};
-        if (!engine.read_config(index, config) || !config.enabled ||
-            config.type != kTypes[index] || config.source != kSources[index]) {
+        if (!engine.read_config(index, config) ||
+            !configurations_equal(config, canonical)) {
             return false;
         }
     }
@@ -97,6 +132,42 @@ bool test_default_scene_and_configuration_api() {
     StripEffectConfig ignored{};
     return !engine.read_config(effects::kEffectStripCount, ignored) &&
            engine.runtime(effects::kEffectStripCount) == nullptr;
+}
+
+bool test_channel_one_has_no_runtime_dependency() {
+    EffectEngine engine;
+    std::array<StripEffectConfig, effects::kEffectStripCount> before{};
+    for (std::size_t index = 0u; index < before.size(); ++index) {
+        if (!engine.read_config(index, before[index])) {
+            return false;
+        }
+    }
+
+    StripEffectConfig changed = before[0];
+    changed.type = EffectType::scalar_vu;
+    changed.source = EffectSource::left;
+    changed.vu_color_mode = VuColorMode::solid;
+    changed.primary_color = kBlue;
+    changed.attack_ms = 0u;
+    changed.release_ms = 0u;
+    if (engine.stage_strip_config(0u, changed) != EffectStatus::ok ||
+        !engine.apply_pending()) {
+        return false;
+    }
+
+    StripEffectConfig actual{};
+    if (!engine.read_config(0u, actual) || !configurations_equal(actual, changed)) {
+        return false;
+    }
+
+    for (std::size_t index = 1u; index < before.size(); ++index) {
+        if (!engine.read_config(index, actual) ||
+            !configurations_equal(actual, before[index])) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 bool test_validation_and_atomic_scene_staging() {
@@ -123,13 +194,27 @@ bool test_validation_and_atomic_scene_staging() {
         return false;
     }
 
+    config = {};
+    config.enabled = true;
+    config.type = EffectType::stroboscope;
+    config.source = EffectSource::none;
+    if (engine.validate_config(config) != EffectStatus::invalid_parameter) {
+        return false;
+    }
+
+    config.strobe_frequency_hz = 8u;
+    if (engine.validate_config(config) != EffectStatus::ok) {
+        return false;
+    }
+
     config = scalar_config(EffectSource::left, kRed);
     if (engine.stage_strip_config(effects::kEffectStripCount, config) !=
         EffectStatus::invalid_strip_index) {
         return false;
     }
 
-    std::array<StripEffectConfig, effects::kEffectStripCount> scene = off_scene();
+    std::array<StripEffectConfig, effects::kEffectStripCount> scene =
+        off_scene();
     scene[0] = scalar_config(EffectSource::left, kRed);
     if (engine.stage_scene(scene) != EffectStatus::ok ||
         !engine.has_pending_configuration()) {
@@ -137,7 +222,8 @@ bool test_validation_and_atomic_scene_staging() {
     }
 
     StripEffectConfig active{};
-    if (!engine.read_config(0u, active) || active.type != EffectType::spectrum_bars) {
+    if (!engine.read_config(0u, active) ||
+        active.type != EffectType::stereo_center_out_vu) {
         return false;
     }
 
@@ -177,7 +263,8 @@ bool test_off_static_and_span_bounds() {
     }
 
     std::array<RgbwColor, 5> guarded{{kRed, kOff, kOff, kOff, kGreen}};
-    std::array<EffectRenderSpan, effects::kEffectStripCount> spans = empty_spans();
+    std::array<EffectRenderSpan, effects::kEffectStripCount> spans =
+        empty_spans();
     spans[0] = {guarded.data() + 1u, 3u};
     const AudioLevelFrame audio{};
     const SpectrumFrame spectrum{};
@@ -590,6 +677,502 @@ bool test_stereo_mirrored_macro_and_response_geometry() {
     return normal_release != 0u && delayed_release < normal_release;
 }
 
+bool test_vu_colour_modes_and_centre_geometry() {
+    AudioLevelFrame audio{};
+    audio.left_peak = 2047u;
+    audio.right_peak = 2047u;
+    SpectrumFrame spectrum{};
+
+    std::array<StripEffectConfig, effects::kEffectStripCount> scene = off_scene();
+    scene[0].enabled = true;
+    scene[0].type = EffectType::stereo_center_out_vu;
+    scene[0].source = EffectSource::stereo_left_right;
+    scene[0].attack_ms = 0u;
+    scene[0].release_ms = 0u;
+    scene[0].vu_color_mode = VuColorMode::level_position_gradient;
+    scene[0].palette = {kGreen, {255, 255, 0, 0}, {255, 128, 0, 0}, kRed};
+
+    EffectEngine gradient_engine;
+    if (gradient_engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+
+    std::array<RgbwColor, 5> odd_pixels{};
+    std::array<EffectRenderSpan, effects::kEffectStripCount> spans = empty_spans();
+    spans[0] = {odd_pixels.data(), odd_pixels.size()};
+    gradient_engine.render(snapshot(audio, spectrum), spans);
+    if (!colors_equal(odd_pixels[2], kGreen) ||
+        odd_pixels[1].red != 255u || odd_pixels[1].green <= 128u ||
+        odd_pixels[1].green >= 255u || odd_pixels[1].blue != 0u ||
+        !colors_equal(odd_pixels[0], kRed) ||
+        !colors_equal(odd_pixels[3], kGreen) ||
+        !colors_equal(odd_pixels[4], kRed)) {
+        return false;
+    }
+
+    EffectEngine even_engine;
+    if (even_engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+
+    std::array<RgbwColor, 6> even_pixels{};
+    spans = empty_spans();
+    spans[0] = {even_pixels.data(), even_pixels.size()};
+    even_engine.render(snapshot(audio, spectrum), spans);
+    if (!colors_equal(even_pixels[2], kGreen) ||
+        !colors_equal(even_pixels[3], kGreen) ||
+        !colors_equal(even_pixels[0], kRed) ||
+        !colors_equal(even_pixels[5], kRed)) {
+        return false;
+    }
+
+    scene[0].type = EffectType::scalar_vu;
+    scene[0].source = EffectSource::left;
+    scene[0].vu_color_mode = VuColorMode::solid;
+    scene[0].primary_color = kBlue;
+    EffectEngine solid_engine;
+    if (solid_engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+
+    std::array<RgbwColor, 4> solid_pixels{};
+    spans = empty_spans();
+    spans[0] = {solid_pixels.data(), solid_pixels.size()};
+    solid_engine.render(snapshot(audio, spectrum), spans);
+    for (const RgbwColor pixel : solid_pixels) {
+        if (!colors_equal(pixel, kBlue)) {
+            return false;
+        }
+    }
+
+    scene[0].vu_color_mode = VuColorMode::animated_rainbow;
+    scene[0].animation_speed_q8 = 256u;
+    scene[0].color_spacing_q8 = 256u;
+    EffectEngine rainbow_engine;
+    if (rainbow_engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+
+    std::array<RgbwColor, 4> first_rainbow{};
+    std::array<RgbwColor, 4> second_rainbow{};
+    spans = empty_spans();
+    spans[0] = {first_rainbow.data(), first_rainbow.size()};
+    rainbow_engine.render(snapshot(audio, spectrum, 33000u), spans);
+    spans[0] = {second_rainbow.data(), second_rainbow.size()};
+    rainbow_engine.render(snapshot(audio, spectrum, 66000u), spans);
+    return !colors_equal(first_rainbow[0], first_rainbow[1]) &&
+           !colors_equal(first_rainbow[0], second_rainbow[0]);
+}
+
+bool any_lit(const std::array<RgbwColor, 8>& pixels) {
+    for (const RgbwColor pixel : pixels) {
+        if (!is_off(pixel)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool test_catalog_dynamic_effects_and_independent_state() {
+    AudioLevelFrame audio{};
+    SpectrumFrame spectrum{};
+    spectrum.raw_low = 65535u;
+    spectrum.raw_mid = 32768u;
+    spectrum.raw_high = 16384u;
+
+    std::array<StripEffectConfig, effects::kEffectStripCount> scene =
+        off_scene();
+    scene[0].enabled = true;
+    scene[0].type = EffectType::one_band_frequency;
+    scene[0].source = EffectSource::macro_bands;
+    scene[0].frequency_selection = FrequencySelection::low;
+    scene[0].primary_color = kRed;
+
+    scene[1].enabled = true;
+    scene[1].type = EffectType::stroboscope;
+    scene[1].source = EffectSource::none;
+    scene[1].frequency_selection = FrequencySelection::low;
+    scene[1].primary_color = kGreen;
+    scene[1].strobe_frequency_hz = 8u;
+    scene[1].strobe_fade_ms = 100u;
+
+    scene[2].enabled = true;
+    scene[2].type = EffectType::ambient_color_cycle;
+    scene[2].source = EffectSource::none;
+
+    scene[3].enabled = true;
+    scene[3].type = EffectType::running_rainbow;
+    scene[3].source = EffectSource::none;
+    scene[3].color_spacing_q8 = 256u;
+
+    scene[4].enabled = true;
+    scene[4].type = EffectType::running_frequency;
+    scene[4].source = EffectSource::macro_bands;
+    scene[4].frequency_selection = FrequencySelection::high;
+    scene[4].primary_color = kBlue;
+    scene[4].fade_decay_ms = 180u;
+
+    scene[5].enabled = true;
+    scene[5].type = EffectType::static_rgbw;
+    scene[5].source = EffectSource::none;
+    scene[5].primary_color = kWhite;
+
+    EffectEngine engine;
+    if (engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+
+    std::array<std::array<RgbwColor, 8>, effects::kEffectStripCount> pixels{};
+    std::array<EffectRenderSpan, effects::kEffectStripCount> spans{};
+    for (std::size_t index = 0u; index < spans.size(); ++index) {
+        spans[index] = {pixels[index].data(), pixels[index].size()};
+    }
+
+    engine.render(snapshot(audio, spectrum, 33000u), spans);
+    if (!colors_equal(pixels[0][0], kRed) || !colors_equal(pixels[0][7], kRed) ||
+        !any_lit(pixels[1]) || !any_lit(pixels[2]) || !any_lit(pixels[3]) ||
+        !any_lit(pixels[4]) || !colors_equal(pixels[5][0], kWhite)) {
+        return false;
+    }
+
+    if (colors_equal(pixels[3][0], pixels[3][7])) {
+        return false;
+    }
+
+    std::array<StripEffectConfig, effects::kEffectStripCount> independent =
+        off_scene();
+    for (std::size_t index = 0u; index < independent.size(); ++index) {
+        independent[index] = scene[2];
+        independent[index].animation_speed_q8 = static_cast<uint16_t>(
+            (index + 1u) * 256u);
+    }
+
+    EffectEngine independent_engine;
+    if (independent_engine.stage_scene(independent) != EffectStatus::ok) {
+        return false;
+    }
+
+    independent_engine.render(snapshot(audio, spectrum, 33000u), spans);
+    for (std::size_t index = 0u; index < independent.size(); ++index) {
+        const effects::StripEffectRuntime* runtime =
+            independent_engine.runtime(index);
+        const uint16_t expected_phase = static_cast<uint16_t>(
+            (index + 1u) * 33u);
+        if (runtime == nullptr ||
+            runtime->state.animation_phase != expected_phase) {
+            return false;
+        }
+    }
+
+    StripEffectConfig invalid = scene[0];
+    invalid.source = EffectSource::left;
+    return engine.validate_config(invalid) == EffectStatus::incompatible_source;
+}
+
+bool test_running_rainbow_uses_per_pixel_spacing() {
+    const AudioLevelFrame audio{};
+    const SpectrumFrame spectrum{};
+    std::array<StripEffectConfig, effects::kEffectStripCount> scene =
+        off_scene();
+    scene[0].enabled = true;
+    scene[0].type = EffectType::running_rainbow;
+    scene[0].source = EffectSource::none;
+    scene[0].animation_speed_q8 = 0u;
+    scene[0].color_spacing_q8 = 256u;
+
+    EffectEngine engine;
+    if (engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+
+    std::array<RgbwColor, 4> forward{};
+    std::array<EffectRenderSpan, effects::kEffectStripCount> spans =
+        empty_spans();
+    spans[0] = {forward.data(), forward.size()};
+    engine.render(snapshot(audio, spectrum), spans);
+    if (!colors_equal(forward[0], {255u, 0u, 0u, 0u}) ||
+        !colors_equal(forward[1], {255u, 1u, 0u, 0u}) ||
+        !colors_equal(forward[2], {255u, 2u, 0u, 0u}) ||
+        !colors_equal(forward[3], {255u, 3u, 0u, 0u})) {
+        return false;
+    }
+
+    scene[0].reversed = true;
+    if (engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+
+    std::array<RgbwColor, 4> reversed{};
+    spans[0] = {reversed.data(), reversed.size()};
+    engine.render(snapshot(audio, spectrum, 66000u), spans);
+    return colors_equal(reversed[0], {255u, 3u, 0u, 0u}) &&
+           colors_equal(reversed[1], {255u, 2u, 0u, 0u}) &&
+           colors_equal(reversed[2], {255u, 1u, 0u, 0u}) &&
+           colors_equal(reversed[3], {255u, 0u, 0u, 0u});
+}
+
+bool smoothed_state_matches_across_lengths(StripEffectConfig config,
+                                            const AudioLevelFrame& audio,
+                                            const SpectrumFrame& spectrum,
+                                            std::size_t state_count) {
+    std::array<StripEffectConfig, effects::kEffectStripCount> scene =
+        off_scene();
+    scene[0] = config;
+
+    EffectEngine short_engine;
+    EffectEngine long_engine;
+    if (short_engine.stage_scene(scene) != EffectStatus::ok ||
+        long_engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+
+    std::array<RgbwColor, 5> short_pixels{};
+    std::array<RgbwColor, 65> long_pixels{};
+    std::array<EffectRenderSpan, effects::kEffectStripCount> short_spans =
+        empty_spans();
+    std::array<EffectRenderSpan, effects::kEffectStripCount> long_spans =
+        empty_spans();
+    short_spans[0] = {short_pixels.data(), short_pixels.size()};
+    long_spans[0] = {long_pixels.data(), long_pixels.size()};
+    short_engine.render(snapshot(audio, spectrum), short_spans);
+    long_engine.render(snapshot(audio, spectrum), long_spans);
+
+    const effects::StripEffectRuntime* short_runtime = short_engine.runtime(0u);
+    const effects::StripEffectRuntime* long_runtime = long_engine.runtime(0u);
+    if (short_runtime == nullptr || long_runtime == nullptr) {
+        return false;
+    }
+
+    for (std::size_t index = 0u; index < state_count; ++index) {
+        if (short_runtime->state.smoothed_levels[index] == 0u ||
+            short_runtime->state.smoothed_levels[index] !=
+                long_runtime->state.smoothed_levels[index]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool test_segment_smoothing_is_once_per_frame_and_converges() {
+    const AudioLevelFrame audio{};
+    SpectrumFrame spectrum{};
+    spectrum.raw_bands.fill(1u);
+    spectrum.raw_bass = 1u;
+    spectrum.raw_low = 1u;
+    spectrum.raw_mid = 1u;
+    spectrum.raw_high = 1u;
+
+    StripEffectConfig spectrum_bars{};
+    spectrum_bars.enabled = true;
+    spectrum_bars.type = EffectType::spectrum_bars;
+    spectrum_bars.source = EffectSource::spectrum_32;
+    spectrum_bars.segment_count = 5u;
+    spectrum_bars.attack_ms = 5000u;
+    spectrum_bars.release_ms = 5000u;
+    spectrum_bars.palette = {kRed, kGreen, kBlue, kWhite};
+    if (!smoothed_state_matches_across_lengths(spectrum_bars,
+                                                audio,
+                                                spectrum,
+                                                spectrum_bars.segment_count)) {
+        return false;
+    }
+
+    StripEffectConfig mirrored{};
+    mirrored.enabled = true;
+    mirrored.type = EffectType::mirrored_spectrum_zones;
+    mirrored.source = EffectSource::spectrum_32;
+    mirrored.zone_count = 5u;
+    mirrored.attack_ms = 5000u;
+    mirrored.release_ms = 5000u;
+    mirrored.palette = {kRed, kGreen, kBlue, kWhite};
+    if (!smoothed_state_matches_across_lengths(mirrored,
+                                                audio,
+                                                spectrum,
+                                                mirrored.zone_count)) {
+        return false;
+    }
+
+    StripEffectConfig macro{};
+    macro.enabled = true;
+    macro.type = EffectType::macro_bands;
+    macro.source = EffectSource::macro_bands;
+    macro.macro_region_count = 4u;
+    macro.attack_ms = 5000u;
+    macro.release_ms = 5000u;
+    macro.palette = {kRed, kGreen, kBlue, kWhite};
+    if (!smoothed_state_matches_across_lengths(macro,
+                                                audio,
+                                                spectrum,
+                                                macro.macro_region_count)) {
+        return false;
+    }
+
+    EffectEngine convergence_engine;
+    std::array<StripEffectConfig, effects::kEffectStripCount> scene =
+        off_scene();
+    scene[0] = spectrum_bars;
+    if (convergence_engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+
+    std::array<RgbwColor, 5> pixels{};
+    std::array<EffectRenderSpan, effects::kEffectStripCount> spans =
+        empty_spans();
+    spans[0] = {pixels.data(), pixels.size()};
+    convergence_engine.render(snapshot(audio, spectrum), spans);
+    if (convergence_engine.runtime(0u)->state.smoothed_levels[0] != 1u) {
+        return false;
+    }
+
+    spectrum.raw_bands.fill(0u);
+    convergence_engine.render(snapshot(audio, spectrum, 66000u), spans);
+    return convergence_engine.runtime(0u)->state.smoothed_levels[0] == 0u;
+}
+
+bool test_all_effects_handle_short_spans_without_out_of_bounds_writes() {
+    AudioLevelFrame audio{};
+    audio.left_peak = 2047u;
+    audio.right_peak = 2047u;
+    SpectrumFrame spectrum{};
+    spectrum.raw_bands.fill(65535u);
+    spectrum.raw_bass = 65535u;
+    spectrum.raw_low = 65535u;
+    spectrum.raw_mid = 65535u;
+    spectrum.raw_high = 65535u;
+
+    std::array<StripEffectConfig, 12> configurations{};
+    configurations[0] = {true, EffectType::static_rgbw, EffectSource::none};
+    configurations[0].primary_color = kWhite;
+    configurations[1] = scalar_config(EffectSource::left, kRed);
+    configurations[2].enabled = true;
+    configurations[2].type = EffectType::stereo_center_out_vu;
+    configurations[2].source = EffectSource::stereo_left_right;
+    configurations[2].primary_color = kRed;
+    configurations[2].secondary_color = kBlue;
+    configurations[3].enabled = true;
+    configurations[3].type = EffectType::spectrum_bars;
+    configurations[3].source = EffectSource::spectrum_32;
+    configurations[3].segment_count = 5u;
+    configurations[4] = configurations[3];
+    configurations[4].type = EffectType::mirrored_spectrum_zones;
+    configurations[4].zone_count = 5u;
+    configurations[5].enabled = true;
+    configurations[5].type = EffectType::macro_bands;
+    configurations[5].source = EffectSource::macro_bands;
+    configurations[5].macro_region_count = 4u;
+    configurations[6].enabled = true;
+    configurations[6].type = EffectType::one_band_frequency;
+    configurations[6].source = EffectSource::macro_bands;
+    configurations[7].enabled = true;
+    configurations[7].type = EffectType::stroboscope;
+    configurations[7].source = EffectSource::none;
+    configurations[8].enabled = true;
+    configurations[8].type = EffectType::ambient_color_cycle;
+    configurations[8].source = EffectSource::none;
+    configurations[9].enabled = true;
+    configurations[9].type = EffectType::running_rainbow;
+    configurations[9].source = EffectSource::none;
+    configurations[10].enabled = true;
+    configurations[10].type = EffectType::running_frequency;
+    configurations[10].source = EffectSource::macro_bands;
+    configurations[11].enabled = true;
+    configurations[11].type = EffectType::off;
+    configurations[11].source = EffectSource::none;
+
+    for (const StripEffectConfig& config : configurations) {
+        EffectEngine engine;
+        std::array<StripEffectConfig, effects::kEffectStripCount> scene =
+            off_scene();
+        scene[0] = config;
+        if (engine.stage_scene(scene) != EffectStatus::ok) {
+            return false;
+        }
+
+        std::array<EffectRenderSpan, effects::kEffectStripCount> spans =
+            empty_spans();
+        spans[0] = {nullptr, 0u};
+        engine.render(snapshot(audio, spectrum), spans);
+
+        std::array<RgbwColor, 4> guarded{{kRed, kOff, kOff, kGreen}};
+        spans[0] = {guarded.data() + 1u, 2u};
+        engine.render(snapshot(audio, spectrum, 66000u), spans);
+        if (!colors_equal(guarded.front(), kRed) ||
+            !colors_equal(guarded.back(), kGreen)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool test_reset_default_and_diagnostic_scene_data() {
+    const std::array<StripEffectConfig, effects::kEffectStripCount> reset =
+        effects::reset_default_scene();
+    for (const StripEffectConfig& config : reset) {
+        if (!config.enabled ||
+            config.type != EffectType::stereo_center_out_vu ||
+            config.source != EffectSource::stereo_left_right ||
+            config.vu_color_mode != VuColorMode::level_position_gradient ||
+            !is_off(config.background_color) ||
+            !colors_equal(config.palette[0], kGreen) ||
+            !colors_equal(config.palette[3], kRed)) {
+            return false;
+        }
+    }
+
+    const std::array<StripEffectConfig, effects::kEffectStripCount> first =
+        effects::diagnostic_scene(effects::DiagnosticSceneId::vu_and_ambient);
+    const std::array<StripEffectConfig, effects::kEffectStripCount> second =
+        effects::diagnostic_scene(
+            effects::DiagnosticSceneId::spectrum_and_motion);
+    if (first[0].type != EffectType::scalar_vu ||
+        first[1].vu_color_mode != VuColorMode::animated_rainbow ||
+        first[2].type != EffectType::static_rgbw ||
+        first[3].type != EffectType::stroboscope ||
+        first[4].type != EffectType::ambient_color_cycle ||
+        first[5].type != EffectType::running_rainbow ||
+        second[0].type != EffectType::spectrum_bars ||
+        second[1].type != EffectType::mirrored_spectrum_zones ||
+        second[2].type != EffectType::macro_bands ||
+        second[3].type != EffectType::one_band_frequency ||
+        second[4].type != EffectType::running_frequency ||
+        second[5].static_color_mode != StaticColorMode::white_boost ||
+        effects::diagnostic_scene_duration_ms(
+            effects::DiagnosticSceneId::vu_and_ambient) == 0u ||
+        effects::next_diagnostic_scene(
+            effects::DiagnosticSceneId::vu_and_ambient) !=
+            effects::DiagnosticSceneId::spectrum_and_motion ||
+        effects::next_diagnostic_scene(
+            effects::DiagnosticSceneId::spectrum_and_motion) !=
+            effects::DiagnosticSceneId::vu_and_ambient) {
+        return false;
+    }
+
+    EffectEngine engine;
+    const uint32_t generation_before = engine.configuration_generation();
+    if (engine.stage_scene(first) != EffectStatus::ok ||
+        !engine.has_pending_configuration()) {
+        return false;
+    }
+
+    const AudioLevelFrame audio{};
+    const SpectrumFrame spectrum{};
+    engine.render(snapshot(audio, spectrum), empty_spans());
+    if (engine.configuration_generation() != generation_before + 1u ||
+        engine.has_pending_configuration()) {
+        return false;
+    }
+
+    if (engine.stage_scene(second) != EffectStatus::ok) {
+        return false;
+    }
+
+    engine.render(snapshot(audio, spectrum, 66000u), empty_spans());
+    return engine.configuration_generation() == generation_before + 2u;
+}
+
 struct NamedTest {
     const char* name;
     bool (*function)();
@@ -598,8 +1181,9 @@ struct NamedTest {
 }  // namespace
 
 int main() {
-    constexpr std::array<NamedTest, 9> kTests{{
+    constexpr std::array<NamedTest, 16> kTests{{
         {"default scene and configuration API", test_default_scene_and_configuration_api},
+        {"channel one has no runtime dependency", test_channel_one_has_no_runtime_dependency},
         {"validation and atomic scene staging", test_validation_and_atomic_scene_staging},
         {"off, static RGBW, and span bounds", test_off_static_and_span_bounds},
         {"static RGBW White Boost", test_static_white_boost},
@@ -609,6 +1193,17 @@ int main() {
         {"spectrum and macro routing", test_spectrum_and_macro_routing},
         {"stereo, mirrored, macro, and response geometry",
          test_stereo_mirrored_macro_and_response_geometry},
+        {"VU colour modes and centre geometry", test_vu_colour_modes_and_centre_geometry},
+        {"catalog dynamic effects and independent state",
+         test_catalog_dynamic_effects_and_independent_state},
+        {"running rainbow per-pixel spacing",
+         test_running_rainbow_uses_per_pixel_spacing},
+        {"segmented smoothing once per frame and convergence",
+         test_segment_smoothing_is_once_per_frame_and_converges},
+        {"all effects short-span bounds",
+         test_all_effects_handle_short_spans_without_out_of_bounds_writes},
+        {"reset default and diagnostic scene data",
+         test_reset_default_and_diagnostic_scene_data},
     }};
 
     for (const NamedTest& test : kTests) {

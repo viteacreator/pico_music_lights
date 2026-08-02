@@ -17,8 +17,10 @@ coherent, read-only `AudioLevelFrame` and `SpectrumFrame` per LED frame.
   attack/release milliseconds and bounded effect parameters.
 - Support scalar sources Left, Right, Aux, Mono, Bass, Low, Mid and High;
   structured Stereo Left/Right, 32-band Spectrum and Macro Bands sources.
-- Support Off, Static Direct RGBW, Static White Boost, Scalar VU, Stereo Centre-Out VU, Spectrum Bars,
-  Mirrored Spectrum Zones and Macro-Band effects.
+- Support Off, Static Direct RGBW, Static White Boost, Scalar VU, Stereo
+  Centre-Out VU, Spectrum Bars, Mirrored Spectrum Zones, Macro Bands, one-band
+  frequency, stroboscope, smooth colour cycle, running rainbow, and
+  running-frequency effects.
 - The engine shall validate a strip proposal before staging it; scene updates
   are all-or-nothing and changes become visible only at a render boundary.
   Generation increases monotonically for each accepted applied change.
@@ -38,8 +40,27 @@ coherent, read-only `AudioLevelFrame` and `SpectrumFrame` per LED frame.
   luminous output, and can consume substantially more electrical current.
 - Due frames are skipped when the LED manager is busy. Rendering remains 30 Hz
   maximum and is attempted only in a no-ready-audio iteration.
-- Default compiled scene: 16-segment spectrum; five-zone mirrored spectrum;
-  four macro bands; stereo centre-out VU; Mono scalar VU; Aux scalar VU.
+- The compiled default scene is six independent value copies of one canonical
+  configuration: Stereo Centre-Out VU, Stereo Left/Right source, Off
+  background, and a level-position Green → Yellow → Orange → Red gradient.
+  Channel 1 has no master role or runtime relationship to Channels 2–6.
+- VU colour modes are Solid, Level-Position Gradient, and Animated Rainbow.
+  Gradient position is normalized from each half's logical centre to its end;
+  rainbow phase, speed and spacing remain per-strip.
+- Dynamic parameters are bounded fixed-size values: Q8 animation speed and
+  spacing, fade/decay time, strobe frequency/fade time, and one-band frequency
+  selection (three frequencies, Low, Mid, High).
+- `color_spacing_q8` is the hue increment per logical pixel, not a request to
+  stretch one rainbow cycle over a strip. Direction changes the logical spatial
+  order without changing this increment.
+- A segmented effect derives every source target, smooths each logical segment
+  or zone once per rendered frame, then reuses that cached level for all pixels
+  belonging to it. Smoothing is therefore independent of strip length and
+  advances by at least one level toward a different target when elapsed time is
+  nonzero.
+- `reset_default_scene()` is named configuration data containing six canonical
+  centre-out VUs. The boot-time physical bring-up instead cycles isolated,
+  timed diagnostic scenes through the existing atomic scene-staging API.
 
 ## Definition of done
 
