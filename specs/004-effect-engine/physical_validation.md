@@ -6,7 +6,7 @@ Physical acceptance is pending.
    as the established GP2-GP7 GRBW configuration.
 2. Confirm the startup report identifies the temporary diagnostic scene and a
    nonzero configuration generation. Every 12 seconds it shall cycle through
-   Gyver VU/ambient, Alex frequency/spectrum, generic spectrum/motion, and
+   Gyver VU/ambient, Gyver frequency/spectrum, generic spectrum/motion, and
    generic ambient/frequency demonstrations.
 3. With quiet input for 60 seconds, confirm no growth in `adc_drop`,
    `missing_audio_blocks`, `dropped_windows`, `adc_over`, `adc_under`, or LED
@@ -15,14 +15,14 @@ Physical acceptance is pending.
    adapt to their own strip length. Verify a running-rainbow hue increment is
    constant from one logical pixel to the next. Stage a different effect only
    on Channel 1 and confirm Channels 2-6 remain unchanged.
-5. Confirm Gyver Frequency 5 Zones reads High|Mid|Low|Mid|High and Alex
+5. Confirm Gyver Frequency 5 Zones reads High|Mid|Low|Mid|High and Gyver
    Frequency 3 Zones reads High|Mid|Low. Check reversal swaps the logical
-   layouts, and verify Alex Full Strip High-first and strongest-event policies.
+   layouts, and verify Gyver Full Strip High-first and strongest-event policies.
 6. Confirm Gyver Running Frequencies starts at the centre and moves matching
-   colour history toward both ends on odd and even strips. Confirm the Alex
+   colour history toward both ends on odd and even strips. Confirm the Gyver
    Spectrum Analyzer is mirrored with low bands at centre and high bands at
    ends.
-7. With quiet input then changing music level, observe that Alex event flashes
+7. With quiet input then changing music level, observe that Gyver event flashes
    decay and Gyver VU/Spectrum auto gain adapts. Set a nonzero RGBW background
    and verify it remains visible between events.
 8. Confirm `effect_render_us` remains bounded and the 30 Hz renderer skips a
@@ -35,3 +35,6 @@ Physical acceptance is pending.
 10. Stage the named reset-default scene and confirm it yields six independent
     Gyver VU Gradient Green-Yellow-Orange-Red VUs. Confirm that this explicit
     action stops the temporary diagnostic sequence.
+11. With quiet inputs run `vu_noise_calibrate 2000`, then use
+    `vu_noise_floors`. Confirm floors are raw peak counts, quiet values leave
+    Gyver VU bars off, and the bars decay normally after sound stops.

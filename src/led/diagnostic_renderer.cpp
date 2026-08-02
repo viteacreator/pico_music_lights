@@ -251,6 +251,23 @@ effects::EffectStatus diagnostic_renderer_stage_effect_config(
     return status;
 }
 
+bool diagnostic_renderer_read_effect_runtime(
+    std::size_t strip_index,
+    DiagnosticEffectRuntimeSnapshot& output) {
+    const effects::StripEffectRuntime* const runtime =
+        g_effect_engine.runtime(strip_index);
+    if (runtime == nullptr) {
+        return false;
+    }
+
+    output.config = runtime->config;
+    output.left_reference = runtime->state.auto_gain_references[0u];
+    output.right_reference = runtime->state.auto_gain_references[1u];
+    output.left_gate_open = runtime->state.gyver_left_noise_gate_open;
+    output.right_gate_open = runtime->state.gyver_right_noise_gate_open;
+    return true;
+}
+
 effects::EffectStatus diagnostic_renderer_stage_effect_scene(
     const std::array<effects::StripEffectConfig, effects::kEffectStripCount>& scene) {
     const effects::EffectStatus status = g_effect_engine.stage_scene(scene);

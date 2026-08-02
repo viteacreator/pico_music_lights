@@ -67,6 +67,7 @@ bool configurations_equal(const StripEffectConfig& first,
            first.vu_color_mode == second.vu_color_mode &&
            first.frequency_selection == second.frequency_selection &&
            first.gyver_full_strip_selection == second.gyver_full_strip_selection &&
+           first.macro_band_mapping == second.macro_band_mapping &&
            gyver_colors_equal &&
            first.animation_speed_q8 == second.animation_speed_q8 &&
            first.color_spacing_q8 == second.color_spacing_q8 &&
@@ -76,11 +77,21 @@ bool configurations_equal(const StripEffectConfig& first,
            first.strobe_fade_ms == second.strobe_fade_ms &&
            first.background_brightness_q8 == second.background_brightness_q8 &&
            first.auto_gain_enabled == second.auto_gain_enabled &&
+           first.auto_gain_headroom_q8 == second.auto_gain_headroom_q8 &&
            first.adaptive_fast_response_ms == second.adaptive_fast_response_ms &&
            first.adaptive_average_response_ms == second.adaptive_average_response_ms &&
            first.adaptive_trigger_percent == second.adaptive_trigger_percent &&
            first.adaptive_event_decay_ms == second.adaptive_event_decay_ms &&
            first.gyver_animation_interval_ms == second.gyver_animation_interval_ms &&
+           first.gyver_rainbow_span_percent == second.gyver_rainbow_span_percent &&
+           first.gyver_left_noise_floor == second.gyver_left_noise_floor &&
+           first.gyver_right_noise_floor == second.gyver_right_noise_floor &&
+           first.gyver_noise_gate_hysteresis == second.gyver_noise_gate_hysteresis &&
+           first.auto_gain_reference_rise_ms == second.auto_gain_reference_rise_ms &&
+           first.auto_gain_reference_fall_ms == second.auto_gain_reference_fall_ms &&
+           first.gyver_spectrum_noise_floor == second.gyver_spectrum_noise_floor &&
+           first.frequency_comet_tail_percent == second.frequency_comet_tail_percent &&
+           first.frequency_comet_quiet_threshold == second.frequency_comet_quiet_threshold &&
            first.reversed == second.reversed &&
            first.visual_gain == second.visual_gain &&
            first.attack_ms == second.attack_ms &&
@@ -1389,6 +1400,66 @@ bool test_gyver_vu_auto_gain_and_spectrum_geometry() {
            (pixels[0].red != pixels[4].red || pixels[0].green != pixels[4].green);
 }
 
+bool test_gyver_vu_raw_noise_gate_and_release() {
+    EffectEngine engine;
+    std::array<StripEffectConfig, effects::kEffectStripCount> scene = off_scene();
+    StripEffectConfig config{};
+    config.enabled = true;
+    config.type = EffectType::gyver_vu_gradient;
+    config.source = EffectSource::stereo_left_right;
+    config.primary_color = kGreen;
+    config.secondary_color = kRed;
+    config.gyver_left_noise_floor = 32u;
+    config.gyver_right_noise_floor = 32u;
+    config.gyver_noise_gate_hysteresis = 4u;
+    config.auto_gain_enabled = false;
+    config.attack_ms = 0u;
+    config.release_ms = 200u;
+    scene[0] = config;
+    if (engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+
+    AudioLevelFrame audio{};
+    SpectrumFrame spectrum{};
+    std::array<RgbwColor, 10u> pixels{};
+    auto spans = empty_spans();
+    spans[0] = {pixels.data(), pixels.size()};
+
+    // Below and equal raw floor must not create an unsigned-underflow pulse.
+    audio.left_peak = 18u;
+    audio.right_peak = 32u;
+    engine.render(snapshot(audio, spectrum, 33000u), spans);
+    for (const RgbwColor color : pixels) {
+        if (!is_off(color)) {
+            return false;
+        }
+    }
+
+    // A real signal opens the gate and becomes visible.
+    audio.left_peak = 512u;
+    engine.render(snapshot(audio, spectrum, 66000u), spans);
+    bool lit = false;
+    for (const RgbwColor color : pixels) {
+        lit = lit || !is_off(color);
+    }
+    if (!lit) {
+        return false;
+    }
+
+    // Still-open hysteresis range below floor targets zero and releases rather
+    // than wrapping into a full-scale bar.
+    audio.left_peak = 30u;
+    engine.render(snapshot(audio, spectrum, 99000u), spans);
+    for (const RgbwColor color : pixels) {
+        if (color.red == 255u || color.green == 255u || color.blue == 255u ||
+            color.white == 255u) {
+            return false;
+        }
+    }
+    return true;
+}
+
 struct NamedTest {
     const char* name;
     bool (*function)();
@@ -1397,7 +1468,7 @@ struct NamedTest {
 }  // namespace
 
 int main() {
-    constexpr std::array<NamedTest, 18> kTests{{
+    constexpr std::array<NamedTest, 19> kTests{{
         {"default scene and configuration API", test_default_scene_and_configuration_api},
         {"channel one has no runtime dependency", test_channel_one_has_no_runtime_dependency},
         {"validation and atomic scene staging", test_validation_and_atomic_scene_staging},
@@ -1420,9 +1491,11 @@ int main() {
          test_all_effects_handle_short_spans_without_out_of_bounds_writes},
         {"reset default and diagnostic scene data",
          test_reset_default_and_diagnostic_scene_data},
-        {"Alex adaptive frequency catalog", test_gyver_adaptive_catalog},
+        {"Gyver adaptive frequency catalog", test_gyver_adaptive_catalog},
         {"Gyver VU auto gain and spectrum geometry",
          test_gyver_vu_auto_gain_and_spectrum_geometry},
+        {"Gyver VU raw noise gate and release",
+         test_gyver_vu_raw_noise_gate_and_release},
     }};
 
     for (const NamedTest& test : kTests) {

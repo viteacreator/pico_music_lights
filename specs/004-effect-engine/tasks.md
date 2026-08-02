@@ -24,12 +24,12 @@
   `frequency_comet` and add separate Gyver-compatible effect identifiers.
 - [x] Add bounded per-strip adaptive Low/Mid/High event state, auto-gain
   references, RGBW half-history, parameter validation, and reset rules.
-- [x] Implement Alex stereo VU, adaptive frequency layouts, Full Strip policy,
+- [x] Implement Gyver stereo VU, adaptive frequency layouts, Full Strip policy,
   mirrored running frequencies, mirrored 32-band spectrum, and RGBW
   ambient/strobe variants without changing generic effects.
 - [x] Update reset-default data to six Gyver VU Gradient configurations and
-  expand isolated diagnostic scenes to cover Alex and generic catalogs.
-- [x] Add focused Alex catalog host regressions for event layouts, policies,
+  expand isolated diagnostic scenes to cover Gyver and generic catalogs.
+- [x] Add focused Gyver catalog host regressions for event layouts, policies,
   auto gain, centre history, short spans, reset data and scene cycling.
 - [ ] Configure, compile and execute all five warning-enabled native host
   targets after the stabilization regressions: `led_logic_tests`,
@@ -37,4 +37,9 @@
   `diagnostic_renderer_tests`, and `effect_engine_tests`.
 - [x] Build Pico W Release firmware, inspect static memory, and update
   diagnostics.
+- [x] Correct raw-domain Gyver VU gating and release, normalized rainbow span,
+  reactive background interpolation, spectrum noise rejection, strobe phases,
+  comet tail orientation, and generic Macro Bands mapping.
+- [x] Add bounded volatile USB VU-noise calibration and rate-limited VU
+  telemetry through the public staged-configuration boundary.
 - [ ] Complete quiet-input and ordinary-music physical validation.

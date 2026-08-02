@@ -35,7 +35,7 @@ enum class EffectType : uint8_t {
     running_rainbow,
     frequency_comet,
 
-    // AlexGyver ColorMusic-compatible effects. These remain distinct from the
+    // Gyver-compatible effects reference AlexGyver ColorMusic v2.10 while
     // generic effects so future configuration metadata can present both sets.
     gyver_vu_gradient,
     gyver_vu_rainbow,
@@ -88,6 +88,14 @@ enum class GyverFullStripSelectionPolicy : uint8_t {
     strongest_event,
 };
 
+// Selects the three logical source levels drawn by the generic Macro Bands
+// effect when macro_region_count is three. Four regions are always Bass,
+// Low, Mid and High in that order.
+enum class GenericMacroBandMapping : uint8_t {
+    low_mid_high,
+    bass_mid_high,
+};
+
 enum class EffectStatus : uint8_t {
     ok,
     invalid_strip_index,
@@ -113,16 +121,18 @@ struct StripEffectConfig {
     // White Boost accepts 0..200. Its RGB assist must have white == 0.
     uint16_t white_drive_percent = 100u;
     RgbwColor rgb_assist_color{255, 255, 255, 0};
-    // Low, Mid, High in that exact order for Alex frequency effects.
+    // Low, Mid, High in that exact order for Gyver frequency effects.
     std::array<RgbwColor, kEffectAdaptiveMacroBandCount> gyver_frequency_colors{
-        RgbwColor{0, 255, 0, 0},
-        RgbwColor{255, 160, 0, 0},
         RgbwColor{255, 0, 0, 0},
+        RgbwColor{0, 255, 0, 0},
+        RgbwColor{255, 255, 0, 0},
     };
     VuColorMode vu_color_mode = VuColorMode::solid;
     FrequencySelection frequency_selection = FrequencySelection::three_frequencies;
     GyverFullStripSelectionPolicy gyver_full_strip_selection =
         GyverFullStripSelectionPolicy::gyver_priority;
+    GenericMacroBandMapping macro_band_mapping =
+        GenericMacroBandMapping::low_mid_high;
     // Q8 phase increments per millisecond and Q8 pixel hue spacing.
     uint16_t animation_speed_q8 = 256u;
     uint16_t color_spacing_q8 = 256u;
@@ -141,6 +151,24 @@ struct StripEffectConfig {
     uint16_t adaptive_trigger_percent = 125u;
     uint16_t adaptive_event_decay_ms = 180u;
     uint16_t gyver_animation_interval_ms = 33u;
+    uint16_t gyver_rainbow_span_percent = 50u;
+    // Raw peak thresholds for Gyver stereo VU. The gate opens above the
+    // threshold and remains open until the raw peak falls below
+    // floor - hysteresis. Defaults suppress the measured quiet ADC noise.
+    uint16_t gyver_left_noise_floor = 32u;
+    uint16_t gyver_right_noise_floor = 32u;
+    uint16_t gyver_noise_gate_hysteresis = 4u;
+    // Auto-gain references rise over this interval and fall more slowly over
+    // the independent fall interval. Headroom is applied after the reference.
+    uint16_t auto_gain_reference_rise_ms = 300u;
+    uint16_t auto_gain_reference_fall_ms = 1800u;
+    // Spectrum energy below this threshold is not allowed to update Gyver
+    // Spectrum Analyzer's adaptive reference.
+    uint16_t gyver_spectrum_noise_floor = 256u;
+    // Frequency Comet uses a percentage of the active span for its tail.
+    // A source level at or below this threshold produces no comet head.
+    uint8_t frequency_comet_tail_percent = 20u;
+    uint16_t frequency_comet_quiet_threshold = 256u;
     bool reversed = false;
     uint16_t visual_gain = kEffectUnityGain;
     uint16_t attack_ms = 0;
@@ -161,7 +189,7 @@ struct StripEffectState {
     std::array<uint16_t, kEffectAdaptiveMacroBandCount> adaptive_event_levels{};
     // Left, Right and spectrum adaptive display references respectively.
     std::array<uint16_t, kEffectAdaptiveMacroBandCount> auto_gain_references{};
-    // Only one logical half is retained for mirrored Alex running frequencies.
+    // Only one logical half is retained for mirrored Gyver running frequencies.
     // At 150 RGBW entries this costs 600 bytes per strip rather than 1,200.
     std::array<RgbwColor, kEffectMaximumHalfPixelsPerStrip>
         gyver_running_frequency_history{};
@@ -172,6 +200,8 @@ struct StripEffectState {
     uint16_t animation_phase = 0;
     uint16_t strobe_phase = 0;
     uint16_t strobe_level = 0;
+    bool gyver_left_noise_gate_open = false;
+    bool gyver_right_noise_gate_open = false;
     // Q8 pixel position; 32 bits cover the full 300-pixel strip span.
     uint32_t running_position = 0;
     uint16_t running_level = 0;

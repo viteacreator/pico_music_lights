@@ -22,7 +22,7 @@ coherent, read-only `AudioLevelFrame` and `SpectrumFrame` per LED frame.
   frequency, stroboscope, smooth colour cycle, running rainbow, and
   `frequency_comet` effects.
 - Keep that generic catalog distinct from the AlexGyver ColorMusic-compatible
-  catalog: Gyver VU Gradient, Gyver VU Rainbow, Gyver Frequency 5 Zones, Alex
+  catalog: Gyver VU Gradient, Gyver VU Rainbow, Gyver Frequency 5 Zones, Gyver
   Frequency 3 Zones, Gyver Frequency Full Strip, Gyver Stroboscope, Gyver Ambient
   Static, Gyver Ambient Color Cycle, Gyver Ambient Running Rainbow, Gyver Running
   Frequencies, and Gyver Spectrum Analyzer.
@@ -69,19 +69,39 @@ coherent, read-only `AudioLevelFrame` and `SpectrumFrame` per LED frame.
 - Gyver VU Gradient and Gyver VU Rainbow are stereo centre-out effects. Their
   independent Left and Right halves support per-strip adaptive display gain,
   enabled by default; disabling it preserves the direct input-level response.
+- Gyver VU noise floors and hysteresis are raw ADC peak counts in the
+  `0..2047` domain. For each side the engine gates raw peak values, subtracts
+  the floor safely, normalizes the remaining range to `0..65535`, applies
+  attack/release and visual gain, then applies adaptive reference/headroom.
+  The gate opens only above its floor and closes at or below
+  `max(0, floor - hysteresis)`. A closed gate freezes its reference while the
+  smoothed visible value releases normally.
+- Gyver Rainbow uses a normalized centre-to-edge span. Its default
+  `gyver_rainbow_span_percent=50` covers half a hue cycle per side; phase is
+  subtracted from outward position so the pattern travels centre-to-edge.
+  Generic rainbow effects retain `color_spacing_q8` as hue increment per pixel.
+- `vu_noise_calibrate [duration_ms]` is an optional bounded, non-blocking USB
+  calibration command (default 2000 ms; 250..10000 ms). It records raw Left
+  and Right maxima, adds a fixed safety margin, and stages the volatile floors
+  into currently active Gyver VU configurations. `vu_noise_floors` reports
+  current floors; `vu_noise_calibrate cancel` cancels an active measurement.
+- Frequency Comet has a source threshold and a configurable 0..100 percent
+  tail (default 20 percent). Its nonlinear tail follows the moving head and
+  blends from configured background to foreground. Gyver Spectrum subtracts
+  `gyver_spectrum_noise_floor` before its peak/reference/normalization path.
 - Gyver Frequency 5 Zones, 3 Zones, Full Strip, and Running Frequencies consume
   the shared Mono Low/Mid/High macro levels through a per-strip adaptive event
   detector: fast filtered input, slow average, relative threshold, event
   flash, and decaying event level. They do not use continuous absolute
   brightness as their primary visible trigger.
 - Gyver Frequency 5 Zones is `High | Mid | Low | Mid | High`; Gyver Frequency 3
-  Zones is `High | Mid | Low`. Direction reverses those logical layouts. Alex
+  Zones is `High | Mid | Low`. Direction reverses those logical layouts. Gyver
   Full Strip supports `gyver_priority` (High, Mid, Low) and `strongest_event`.
 - Gyver Running Frequencies retains a fixed, per-strip half-history and mirrors
   it from the centre to both ends. Gyver Spectrum Analyzer maps all 32 spectrum
   bands from low at the centre to high at both ends and has adaptive display
   gain enabled by default.
-- Alex reactive effects use configurable RGBW background colour and Q8
+- Gyver reactive effects use configurable RGBW background colour and Q8
   brightness, defaulting to off. Gyver Stroboscope additionally supports
   frequency, duty cycle, fade and that background.
 

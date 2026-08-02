@@ -19,6 +19,28 @@ peak metrics where available; spectrum and macro effects use Feature 003 raw
 levels (`raw_bands`, `raw_bass`, `raw_low`, `raw_mid`, `raw_high`). Existing
 Feature 003 smoothed levels remain solely compatible diagnostics.
 
+## Gyver VU and reactive rendering corrections
+
+Gyver VU uses raw ADC peaks (`0..2047`) for noise gating. Each independent
+side follows this fixed integer pipeline: raw peak, hysteresis gate, safe raw
+floor subtraction, normalization by `2047-floor`, attack/release smoothing,
+Q8 visual gain, adaptive reference with Q8 headroom, then logical VU length.
+Gate closure sets only the smoothing target to zero: the retained reference is
+frozen and the bar releases visibly. The reference tracks the ungained
+smoothed level, so visual gain changes sensitivity without changing reference
+learning. Rise and fall timing are separate per configuration.
+
+Gyver Rainbow derives its outward hue offset from each side's usable maximum
+distance and `gyver_rainbow_span_percent`; it subtracts that offset from the
+time phase. Generic rainbow keeps per-pixel `color_spacing_q8` semantics.
+All reactive colour uses `interpolate_color(background, foreground, level)`.
+
+The USB bring-up parser is bounded, non-blocking, and line based. Calibration
+collects peaks during normal audio processing, then uses the existing staged
+configuration API. It owns no heap memory and never pauses capture, FFT, or
+LED DMA. Telemetry reports raw/effective peaks, gate state, references, floors,
+hysteresis and calibration state in a separate bounded line.
+
 Per-strip smoothing is a bounded integer first-order ramp. For each output
 level, the target is visual-gain scaled and clamped to 0..65535. The change per
 frame is proportional to elapsed milliseconds divided by configured attack or
@@ -141,10 +163,12 @@ event. All fields are unsigned 0..65535 except the trigger percentage
 (100..1000). This is a provisional RP2040 parameterization of the requested
 v2.10 behaviour; exact original threshold/timing constants are not claimed.
 
-Alex auto gain retains a per-strip reference for Left, Right and spectrum. A
-new higher level becomes the reference immediately; a falling reference decays
-with the configured slow response. The displayed level is `input/reference`,
-clamped to 0..65535. Disabling auto gain passes the original level through.
+Gyver auto gain retains a per-strip reference for Left, Right and spectrum.
+The reference follows the ungained smoothed value using independently
+configured rise and slower fall times, but freezes while its VU gate is closed
+or all spectrum bands are below the configured floor. Display normalization
+uses `level / (reference * headroom_q8 / 256)`, clamped to `0..65535`.
+Disabling auto gain passes the gained level through.
 
 Gyver Running Frequencies stores one 150-pixel RGBW logical half per strip, then
 mirrors it at render time. This is 600 bytes per strip or 3,600 bytes for six
@@ -165,7 +189,7 @@ and the retained reset-default scene. Effect render time and memory are measured
 Pico firmware/map; host tests validate functional bounds and determinism.
 
 The current ARM Release map reports the six-slot `EffectEngine` global as
-5,496 bytes of static SRAM. Its Gyver Running Frequencies half-history accounts
+5,712 bytes of static SRAM. Its Gyver Running Frequencies half-history accounts
 for 3,600 of those bytes across six strips. The current Feature 004 Release
-firmware measures 83,956 bytes of text and 20,520 bytes of BSS. The final map
+firmware measures 91,032 bytes of text and 21,124 bytes of BSS. The final map
 remains authoritative after future changes.

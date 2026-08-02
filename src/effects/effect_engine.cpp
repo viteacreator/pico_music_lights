@@ -36,6 +36,10 @@ bool is_valid_gyver_full_strip_selection(
     return selection <= GyverFullStripSelectionPolicy::strongest_event;
 }
 
+bool is_valid_macro_band_mapping(GenericMacroBandMapping mapping) {
+    return mapping <= GenericMacroBandMapping::bass_mid_high;
+}
+
 bool is_gyver_adaptive_frequency_effect(EffectType type) {
     switch (type) {
     case EffectType::gyver_frequency_5_zones:
@@ -47,6 +51,12 @@ bool is_gyver_adaptive_frequency_effect(EffectType type) {
     default:
         return false;
     }
+}
+
+bool is_gyver_auto_gain_effect(EffectType type) {
+    return type == EffectType::gyver_vu_gradient ||
+           type == EffectType::gyver_vu_rainbow ||
+           type == EffectType::gyver_spectrum_analyzer;
 }
 
 bool requires_state_reset(const StripEffectConfig& active,
@@ -81,6 +91,50 @@ bool requires_state_reset(const StripEffectConfig& active,
     if ((active.type == EffectType::one_band_frequency ||
          active.type == EffectType::frequency_comet) &&
         active.frequency_selection != proposed.frequency_selection) {
+        return true;
+    }
+
+    if (active.type == EffectType::macro_bands &&
+        active.macro_band_mapping != proposed.macro_band_mapping) {
+        return true;
+    }
+
+    if ((active.type == EffectType::gyver_vu_gradient ||
+         active.type == EffectType::gyver_vu_rainbow) &&
+        (active.gyver_left_noise_floor != proposed.gyver_left_noise_floor ||
+         active.gyver_right_noise_floor != proposed.gyver_right_noise_floor ||
+         active.gyver_noise_gate_hysteresis !=
+             proposed.gyver_noise_gate_hysteresis ||
+         active.auto_gain_enabled != proposed.auto_gain_enabled ||
+         active.auto_gain_headroom_q8 != proposed.auto_gain_headroom_q8 ||
+         active.auto_gain_reference_rise_ms !=
+             proposed.auto_gain_reference_rise_ms ||
+         active.auto_gain_reference_fall_ms !=
+             proposed.auto_gain_reference_fall_ms ||
+         active.gyver_rainbow_span_percent !=
+             proposed.gyver_rainbow_span_percent)) {
+        return true;
+    }
+
+    if (active.type == EffectType::gyver_spectrum_analyzer &&
+        active.gyver_spectrum_noise_floor != proposed.gyver_spectrum_noise_floor) {
+        return true;
+    }
+
+    if (active.type == EffectType::frequency_comet &&
+        (active.frequency_comet_tail_percent !=
+             proposed.frequency_comet_tail_percent ||
+         active.frequency_comet_quiet_threshold !=
+             proposed.frequency_comet_quiet_threshold ||
+         active.reversed != proposed.reversed)) {
+        return true;
+    }
+
+    if ((active.type == EffectType::stroboscope ||
+         active.type == EffectType::gyver_stroboscope) &&
+        (active.strobe_frequency_hz != proposed.strobe_frequency_hz ||
+         active.strobe_duty_percent != proposed.strobe_duty_percent ||
+         active.strobe_fade_ms != proposed.strobe_fade_ms)) {
         return true;
     }
 
@@ -191,7 +245,8 @@ EffectStatus EffectEngine::validate_config(const StripEffectConfig& config) cons
 
     if (!is_valid_vu_color_mode(config.vu_color_mode) ||
         !is_valid_frequency_selection(config.frequency_selection) ||
-        !is_valid_gyver_full_strip_selection(config.gyver_full_strip_selection)) {
+        !is_valid_gyver_full_strip_selection(config.gyver_full_strip_selection) ||
+        !is_valid_macro_band_mapping(config.macro_band_mapping)) {
         return EffectStatus::invalid_parameter;
     }
 
@@ -211,11 +266,15 @@ EffectStatus EffectEngine::validate_config(const StripEffectConfig& config) cons
         config.adaptive_average_response_ms > kEffectMaximumResponseMs ||
         config.adaptive_event_decay_ms > kEffectMaximumResponseMs ||
         config.gyver_animation_interval_ms > kEffectMaximumResponseMs ||
+        config.auto_gain_reference_rise_ms > kEffectMaximumResponseMs ||
+        config.auto_gain_reference_fall_ms > kEffectMaximumResponseMs ||
         config.auto_gain_headroom_q8 < kEffectUnityGain ||
         config.auto_gain_headroom_q8 > kEffectMaximumGain ||
+        config.gyver_rainbow_span_percent > 400u ||
         config.adaptive_trigger_percent < kMinimumAdaptiveTriggerPercent ||
         config.adaptive_trigger_percent > kMaximumAdaptiveTriggerPercent ||
-        config.strobe_duty_percent > 100u) {
+        config.strobe_duty_percent > 100u ||
+        config.frequency_comet_tail_percent > 100u) {
         return EffectStatus::invalid_parameter;
     }
 
@@ -251,6 +310,12 @@ EffectStatus EffectEngine::validate_config(const StripEffectConfig& config) cons
         (config.adaptive_fast_response_ms == 0u ||
          config.adaptive_average_response_ms == 0u ||
          config.gyver_animation_interval_ms == 0u)) {
+        return EffectStatus::invalid_parameter;
+    }
+
+    if (is_gyver_auto_gain_effect(config.type) &&
+        (config.auto_gain_reference_rise_ms == 0u ||
+         config.auto_gain_reference_fall_ms == 0u)) {
         return EffectStatus::invalid_parameter;
     }
 

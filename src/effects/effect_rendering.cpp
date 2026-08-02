@@ -43,6 +43,10 @@ RgbwColor scale_color(RgbwColor color, uint16_t level) {
     };
 }
 
+RgbwColor interpolate_color(RgbwColor first,
+                            RgbwColor second,
+                            uint16_t fraction);
+
 RgbwColor white_boost_color(const StripEffectConfig& config) {
     const uint16_t drive = std::min<uint16_t>(
         config.white_drive_percent, 200u);
@@ -71,7 +75,7 @@ RgbwColor white_boost_color(const StripEffectConfig& config) {
 RgbwColor level_color(RgbwColor foreground,
                       RgbwColor background,
                       uint16_t level) {
-    return level == 0u ? background : scale_color(foreground, level);
+    return interpolate_color(background, foreground, level);
 }
 
 void clear_span(EffectRenderSpan span) {
@@ -112,6 +116,18 @@ uint16_t normalize_audio_peak(uint16_t peak) {
     const uint32_t clamped = std::min<uint32_t>(peak, kAudioPeakMaximum);
     return static_cast<uint16_t>(
         (clamped * 65535u + kAudioPeakMaximum / 2u) / kAudioPeakMaximum);
+}
+
+uint16_t normalize_gated_audio_peak(uint16_t effective_raw,
+                                    uint16_t noise_floor_raw) {
+    const uint16_t remaining_range = std::max<uint16_t>(
+        1u,
+        static_cast<uint16_t>(kAudioPeakMaximum -
+                              std::min(noise_floor_raw, kAudioPeakMaximum)));
+    return static_cast<uint16_t>(std::min<uint32_t>(
+        65535u,
+        (static_cast<uint32_t>(effective_raw) * 65535u + remaining_range / 2u) /
+            remaining_range));
 }
 
 uint16_t scalar_level(EffectSource source, const EffectInputSnapshot& snapshot) {
@@ -279,6 +295,21 @@ void advance_vu_rainbow_phase(StripEffectState& state,
         (static_cast<uint32_t>(speed_q8) * elapsed + 128u) / 256u;
     state.animation_phase = static_cast<uint16_t>(
         (state.animation_phase + increment) % kRainbowHuePeriod);
+}
+
+uint16_t gyver_rainbow_hue(const StripEffectRuntime& runtime,
+                           std::size_t distance_from_centre,
+                           std::size_t half_capacity) {
+    const std::size_t denominator = std::max<std::size_t>(1u,
+                                                          half_capacity - 1u);
+    const uint16_t offset = static_cast<uint16_t>(
+        (static_cast<uint32_t>(distance_from_centre) * kRainbowHuePeriod *
+         runtime.config.gyver_rainbow_span_percent /
+         (100u * denominator)) %
+        kRainbowHuePeriod);
+    return static_cast<uint16_t>(
+        (runtime.state.animation_phase + kRainbowHuePeriod - offset) %
+        kRainbowHuePeriod);
 }
 
 RgbwColor vu_gradient_color(const StripEffectConfig& config,
@@ -562,13 +593,21 @@ void render_macro_bands(StripEffectRuntime& runtime,
 
     std::array<uint16_t, 4> smoothed_regions{};
     for (std::size_t region = 0u; region < region_count; ++region) {
-        const std::size_t source_region = region_count == 3u && region != 0u
-                                              ? region + 1u
-                                              : region;
+        std::size_t source_region = region;
+        if (region_count == 3u) {
+            constexpr std::array<std::size_t, 3> kLowMidHigh{{1u, 2u, 3u}};
+            constexpr std::array<std::size_t, 3> kBassMidHigh{{0u, 2u, 3u}};
+            const std::array<std::size_t, 3>& mapping =
+                runtime.config.macro_band_mapping ==
+                        GenericMacroBandMapping::bass_mid_high
+                    ? kBassMidHigh
+                    : kLowMidHigh;
+            source_region = mapping[region];
+        }
         smoothed_regions[region] = update_level(runtime,
-                                                region,
-                                                levels[source_region],
-                                                elapsed);
+                                                  region,
+                                                  levels[source_region],
+                                                  elapsed);
     }
 
     for (std::size_t pixel = 0; pixel < destination.pixel_count; ++pixel) {
@@ -664,24 +703,31 @@ void render_stroboscope(StripEffectRuntime& runtime,
     const uint32_t duty_fraction = std::min<uint32_t>(
         65535u,
         static_cast<uint32_t>(runtime.config.strobe_duty_percent) * 65535u / 100u);
-    const uint32_t fade_fraction = std::min<uint32_t>(
+    const uint32_t requested_fade_fraction = std::min<uint32_t>(
         65535u,
         (static_cast<uint32_t>(runtime.config.strobe_fade_ms) * 65535u +
          cycle_ms / 2u) /
             std::max<uint32_t>(1u, cycle_ms));
+    const uint32_t fade_fraction = std::min<uint32_t>(
+        requested_fade_fraction,
+        duty_fraction / 2u);
     uint16_t gate = 0u;
     if (runtime.state.strobe_phase < duty_fraction) {
-        const uint32_t fade_start = duty_fraction > fade_fraction
-                                        ? duty_fraction - fade_fraction
-                                        : 0u;
-        gate = fade_fraction == 0u
-                   ? 65535u
-                   : (runtime.state.strobe_phase < fade_start
-                          ? 65535u
-                          : static_cast<uint16_t>(
-                                (static_cast<uint32_t>(duty_fraction -
-                                                       runtime.state.strobe_phase) *
-                                 65535u) / fade_fraction));
+        if (fade_fraction == 0u ||
+            (runtime.state.strobe_phase >= fade_fraction &&
+             runtime.state.strobe_phase < duty_fraction - fade_fraction)) {
+            gate = 65535u;
+        } else if (runtime.state.strobe_phase < fade_fraction) {
+            gate = static_cast<uint16_t>(
+                (static_cast<uint32_t>(runtime.state.strobe_phase) * 65535u +
+                 fade_fraction / 2u) /
+                fade_fraction);
+        } else {
+            gate = static_cast<uint16_t>(
+                (static_cast<uint32_t>(duty_fraction - runtime.state.strobe_phase) *
+                 65535u + fade_fraction / 2u) /
+                fade_fraction);
+        }
     }
 
     runtime.state.strobe_level = static_cast<uint16_t>(
@@ -747,13 +793,16 @@ void render_frequency_comet(StripEffectRuntime& runtime,
     const uint16_t target = saturating_gain(
         selected_frequency_level(runtime.config.frequency_selection, snapshot),
         runtime.config.visual_gain);
+    const uint16_t gated_target = target > runtime.config.frequency_comet_quiet_threshold
+                                      ? target
+                                      : 0u;
     const uint32_t decay_period = std::max<uint32_t>(1u, runtime.config.fade_decay_ms);
     const uint32_t retained_q16 = elapsed >= decay_period
                                       ? 0u
                                       : (decay_period - elapsed) * 65535u /
                                             decay_period;
     runtime.state.running_level = static_cast<uint16_t>(std::max<uint32_t>(
-        target,
+        gated_target,
         (static_cast<uint32_t>(runtime.state.running_level) * retained_q16 +
          32767u) /
             65535u));
@@ -768,22 +817,24 @@ void render_frequency_comet(StripEffectRuntime& runtime,
         span_q8);
     const std::size_t head = runtime.state.running_position / 256u;
 
+    const std::size_t tail_length = std::max<std::size_t>(
+        1u,
+        destination.pixel_count * runtime.config.frequency_comet_tail_percent / 100u);
     for (std::size_t pixel = 0u; pixel < destination.pixel_count; ++pixel) {
-        const std::size_t distance = runtime.config.reversed
-                                         ? (head + destination.pixel_count - pixel) %
-                                               destination.pixel_count
-                                         : (pixel + destination.pixel_count - head) %
-                                               destination.pixel_count;
-        const uint16_t trail = static_cast<uint16_t>(
-            (static_cast<uint32_t>(runtime.state.running_level) *
-             (destination.pixel_count - distance) + destination.pixel_count / 2u) /
-            destination.pixel_count);
+        const std::size_t distance =
+            (head + destination.pixel_count - pixel) % destination.pixel_count;
+        const uint16_t trail = distance >= tail_length
+                                   ? 0u
+                                   : static_cast<uint16_t>(
+                                         static_cast<uint32_t>(runtime.state.running_level) *
+                                         (tail_length - distance) * (tail_length - distance) /
+                                         (tail_length * tail_length));
         write_pixel(destination,
-                    false,
+                    runtime.config.reversed,
                     pixel,
-                    level_color(runtime.config.primary_color,
-                                runtime.config.background_color,
-                                trail));
+                    interpolate_color(runtime.config.background_color,
+                                      runtime.config.primary_color,
+                                      trail));
     }
 }
 
@@ -799,20 +850,24 @@ RgbwColor gyver_background(const StripEffectConfig& config) {
 }
 
 uint16_t apply_gyver_auto_gain(StripEffectRuntime& runtime,
-                              std::size_t reference_index,
-                              uint16_t level,
-                              uint32_t elapsed) {
+                               std::size_t reference_index,
+                               uint16_t level,
+                               uint16_t reference_input,
+                               uint32_t elapsed,
+                               bool update_reference) {
     if (!runtime.config.auto_gain_enabled ||
         reference_index >= runtime.state.auto_gain_references.size()) {
         return level;
     }
 
     uint16_t& reference = runtime.state.auto_gain_references[reference_index];
-    reference = smooth_level(reference,
-                             level,
-                             runtime.config.adaptive_average_response_ms,
-                             runtime.config.adaptive_average_response_ms,
-                             elapsed);
+    if (update_reference) {
+        reference = smooth_level(reference,
+                                 reference_input,
+                                 runtime.config.auto_gain_reference_rise_ms,
+                                 runtime.config.auto_gain_reference_fall_ms,
+                                 elapsed);
+    }
 
     if (reference == 0u) {
         return 0u;
@@ -835,16 +890,59 @@ void render_gyver_stereo_vu(StripEffectRuntime& runtime,
                            uint32_t elapsed,
                            bool rainbow) {
     fill_span(destination, gyver_background(runtime.config));
+    const uint16_t left_raw = snapshot.audio == nullptr
+                                  ? 0u
+                                  : snapshot.audio->left_peak;
+    const uint16_t right_raw = snapshot.audio == nullptr
+                                   ? 0u
+                                   : snapshot.audio->right_peak;
+    const auto gate = [&runtime](uint16_t raw, uint16_t floor, bool& open) {
+        const uint16_t close = floor > runtime.config.gyver_noise_gate_hysteresis
+                                   ? floor - runtime.config.gyver_noise_gate_hysteresis
+                                   : 0u;
+        open = open ? raw > close : raw > floor;
+        return open && raw > floor ? static_cast<uint16_t>(raw - floor) : 0u;
+    };
+    const uint16_t left_effective = gate(left_raw,
+                                         runtime.config.gyver_left_noise_floor,
+                                         runtime.state.gyver_left_noise_gate_open);
+    const uint16_t right_effective = gate(right_raw,
+                                          runtime.config.gyver_right_noise_floor,
+                                          runtime.state.gyver_right_noise_gate_open);
+    const uint16_t left_smoothed = smooth_level(
+        runtime.state.smoothed_levels[0],
+        normalize_gated_audio_peak(left_effective,
+                                   runtime.config.gyver_left_noise_floor),
+                                                 runtime.config.attack_ms,
+                                                 runtime.config.release_ms,
+                                                 elapsed);
+    runtime.state.smoothed_levels[0] = left_smoothed;
+    const uint16_t right_smoothed = smooth_level(
+        runtime.state.smoothed_levels[1],
+        normalize_gated_audio_peak(right_effective,
+                                   runtime.config.gyver_right_noise_floor),
+                                                  runtime.config.attack_ms,
+                                                  runtime.config.release_ms,
+                                                  elapsed);
+    runtime.state.smoothed_levels[1] = right_smoothed;
+    const uint16_t left_gained = saturating_gain(left_smoothed,
+                                                  runtime.config.visual_gain);
+    const uint16_t right_gained = saturating_gain(right_smoothed,
+                                                   runtime.config.visual_gain);
     const uint16_t left = apply_gyver_auto_gain(
         runtime,
         0u,
-        scalar_level(EffectSource::left, snapshot),
-        elapsed);
+        left_gained,
+        left_smoothed,
+        elapsed,
+        runtime.state.gyver_left_noise_gate_open);
     const uint16_t right = apply_gyver_auto_gain(
         runtime,
         1u,
-        scalar_level(EffectSource::right, snapshot),
-        elapsed);
+        right_gained,
+        right_smoothed,
+        elapsed,
+        runtime.state.gyver_right_noise_gate_open);
     const std::size_t left_capacity = (destination.pixel_count + 1u) / 2u;
     const std::size_t right_capacity = destination.pixel_count / 2u;
     const std::size_t left_lit = lit_count(left_capacity, left);
@@ -860,11 +958,9 @@ void render_gyver_stereo_vu(StripEffectRuntime& runtime,
 
     for (std::size_t distance = 0u; distance < left_lit; ++distance) {
         const RgbwColor color = rainbow
-                                    ? rainbow_color(static_cast<uint16_t>(
-                                          (runtime.state.animation_phase +
-                                           pixel_hue_offset(runtime.config,
-                                                            distance)) %
-                                          kRainbowHuePeriod))
+                                    ? rainbow_color(gyver_rainbow_hue(runtime,
+                                                                      distance,
+                                                                      left_capacity))
                                     : vu_gradient_color(runtime.config,
                                                         distance,
                                                         left_capacity);
@@ -895,11 +991,9 @@ void render_gyver_stereo_vu(StripEffectRuntime& runtime,
             break;
         }
         const RgbwColor color = rainbow
-                                    ? rainbow_color(static_cast<uint16_t>(
-                                          (runtime.state.animation_phase +
-                                           pixel_hue_offset(runtime.config,
-                                                            distance)) %
-                                          kRainbowHuePeriod))
+                                    ? rainbow_color(gyver_rainbow_hue(runtime,
+                                                                      distance,
+                                                                      right_capacity))
                                     : vu_gradient_color(runtime.config,
                                                         distance,
                                                         right_capacity);
@@ -1071,13 +1165,19 @@ void render_gyver_spectrum(StripEffectRuntime& runtime,
     std::array<uint16_t, kSpectrumBandCount> bands{};
     resample_raw_spectrum(snapshot.spectrum, bands.data(), kSpectrumBandCount);
     uint16_t peak = 0u;
-    for (const uint16_t band : bands) {
+    for (uint16_t& band : bands) {
+        band = band > runtime.config.gyver_spectrum_noise_floor
+                   ? static_cast<uint16_t>(
+                         band - runtime.config.gyver_spectrum_noise_floor)
+                   : 0u;
         peak = std::max(peak, band);
     }
     const uint16_t gain_reference = apply_gyver_auto_gain(runtime,
                                                           2u,
                                                           peak,
-                                                          elapsed);
+                                                          peak,
+                                                          elapsed,
+                                                          peak != 0u);
     std::array<uint16_t, kSpectrumBandCount> smoothed{};
     for (std::size_t band = 0u; band < bands.size(); ++band) {
         const uint16_t normalized = peak == 0u || gain_reference == 0u

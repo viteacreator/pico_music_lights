@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstdio>
+#include <cstring>
 
 #include "audio/audio_capture.hpp"
 #include "audio/spectrum_analyzer.hpp"
@@ -16,6 +18,11 @@ constexpr uint32_t kAudioAggregateSampleRate = 96'000u;
 constexpr uint32_t kMonoSampleRate = 32'000u;
 constexpr uint32_t kSpectrumOverlapPercent = 50u;
 constexpr std::size_t kTelemetryBufferSize = 512u;
+constexpr std::size_t kCommandBufferSize = 64u;
+constexpr uint32_t kDefaultVuCalibrationDurationMs = 2000u;
+constexpr uint32_t kMinimumVuCalibrationDurationMs = 250u;
+constexpr uint32_t kMaximumVuCalibrationDurationMs = 10000u;
+constexpr uint16_t kVuCalibrationSafetyMargin = 8u;
 // The Feature 004 default-scene line makes the deferred startup report larger
 // than the previous 320-byte buffer. Keep it below the bounded 512-byte USB
 // CDC transmit buffer so startup acknowledgement cannot suppress telemetry.
@@ -33,6 +40,214 @@ uint32_t g_audio_work_us = 0;
 uint32_t g_maximum_audio_work_us = 0;
 bool g_renderer_available = false;
 bool g_startup_report_delivered = false;
+std::array<char, kCommandBufferSize> g_command_line{};
+std::size_t g_command_length = 0u;
+bool g_command_discard_until_newline = false;
+bool g_vu_calibration_active = false;
+uint64_t g_vu_calibration_deadline_us = 0u;
+uint16_t g_vu_calibration_left_peak = 0u;
+uint16_t g_vu_calibration_right_peak = 0u;
+uint16_t g_vu_calibration_last_left_floor = 0u;
+uint16_t g_vu_calibration_last_right_floor = 0u;
+
+bool write_usb_line(const char* line, std::size_t length) {
+    if (line == nullptr || length == 0u || !tud_cdc_connected() ||
+        tud_cdc_write_available() < length) {
+        return false;
+    }
+
+    (void)tud_cdc_write(line, static_cast<uint32_t>(length));
+    tud_cdc_write_flush();
+    return true;
+}
+
+void print_command_reply(const char* message) {
+    const int length = std::snprintf(g_telemetry_line.data(),
+                                     g_telemetry_line.size(),
+                                     "DBG command %s\n",
+                                     message);
+    if (length > 0 && static_cast<std::size_t>(length) < g_telemetry_line.size()) {
+        (void)write_usb_line(g_telemetry_line.data(), static_cast<std::size_t>(length));
+    }
+}
+
+uint16_t calibrated_floor(uint16_t peak) {
+    return static_cast<uint16_t>(std::min<uint32_t>(
+        2047u, static_cast<uint32_t>(peak) + kVuCalibrationSafetyMargin));
+}
+
+void print_vu_floors() {
+    DiagnosticEffectRuntimeSnapshot runtime{};
+    if (!g_renderer_available ||
+        !diagnostic_renderer_read_effect_runtime(0u, runtime)) {
+        print_command_reply("vu_noise_floors renderer=unavailable");
+        return;
+    }
+
+    const int length = std::snprintf(
+        g_telemetry_line.data(),
+        g_telemetry_line.size(),
+        "DBG command vu_noise_floors left=%u right=%u hysteresis=%u last_left=%u last_right=%u\n",
+        runtime.config.gyver_left_noise_floor,
+        runtime.config.gyver_right_noise_floor,
+        runtime.config.gyver_noise_gate_hysteresis,
+        g_vu_calibration_last_left_floor,
+        g_vu_calibration_last_right_floor);
+    if (length > 0 && static_cast<std::size_t>(length) < g_telemetry_line.size()) {
+        (void)write_usb_line(g_telemetry_line.data(), static_cast<std::size_t>(length));
+    }
+}
+
+void begin_vu_calibration(uint32_t duration_ms) {
+    if (!g_renderer_available) {
+        print_command_reply("vu_noise_calibrate renderer=unavailable");
+        return;
+    }
+
+    g_vu_calibration_active = true;
+    g_vu_calibration_left_peak = 0u;
+    g_vu_calibration_right_peak = 0u;
+    g_vu_calibration_deadline_us =
+        time_us_64() + static_cast<uint64_t>(duration_ms) * 1000u;
+    const int length = std::snprintf(g_telemetry_line.data(),
+                                     g_telemetry_line.size(),
+                                     "DBG command vu_noise_calibrate started duration_ms=%lu\n",
+                                     static_cast<unsigned long>(duration_ms));
+    if (length > 0 && static_cast<std::size_t>(length) < g_telemetry_line.size()) {
+        (void)write_usb_line(g_telemetry_line.data(), static_cast<std::size_t>(length));
+    }
+}
+
+void apply_vu_calibration() {
+    const uint16_t left_floor = calibrated_floor(g_vu_calibration_left_peak);
+    const uint16_t right_floor = calibrated_floor(g_vu_calibration_right_peak);
+    bool applied = false;
+
+    for (std::size_t index = 0u; index < effects::kEffectStripCount; ++index) {
+        effects::StripEffectConfig config{};
+        if (!diagnostic_renderer_read_effect_config(index, config) ||
+            (config.type != effects::EffectType::gyver_vu_gradient &&
+             config.type != effects::EffectType::gyver_vu_rainbow)) {
+            continue;
+        }
+
+        config.gyver_left_noise_floor = left_floor;
+        config.gyver_right_noise_floor = right_floor;
+        if (diagnostic_renderer_stage_effect_config(index, config) !=
+            effects::EffectStatus::ok) {
+            print_command_reply("vu_noise_calibrate apply=failed");
+            return;
+        }
+        applied = true;
+    }
+
+    g_vu_calibration_last_left_floor = left_floor;
+    g_vu_calibration_last_right_floor = right_floor;
+    const int length = std::snprintf(
+        g_telemetry_line.data(),
+        g_telemetry_line.size(),
+        "DBG command vu_noise_calibrate complete left=%u right=%u applied=%s\n",
+        left_floor,
+        right_floor,
+        applied ? "yes" : "no_gyver_vu_active");
+    if (length > 0 && static_cast<std::size_t>(length) < g_telemetry_line.size()) {
+        (void)write_usb_line(g_telemetry_line.data(), static_cast<std::size_t>(length));
+    }
+}
+
+void update_vu_calibration(const AudioLevelFrame& frame) {
+    if (!g_vu_calibration_active) {
+        return;
+    }
+
+    g_vu_calibration_left_peak = std::max(g_vu_calibration_left_peak,
+                                          frame.left_peak);
+    g_vu_calibration_right_peak = std::max(g_vu_calibration_right_peak,
+                                           frame.right_peak);
+    if (time_us_64() >= g_vu_calibration_deadline_us) {
+        g_vu_calibration_active = false;
+        apply_vu_calibration();
+    }
+}
+
+void handle_command_line() {
+    g_command_line[g_command_length] = '\0';
+    if (std::strcmp(g_command_line.data(), "vu_noise_floors") == 0) {
+        print_vu_floors();
+        return;
+    }
+
+    if (std::strcmp(g_command_line.data(), "vu_noise_calibrate cancel") == 0) {
+        if (g_vu_calibration_active) {
+            g_vu_calibration_active = false;
+            print_command_reply("vu_noise_calibrate cancelled");
+        } else {
+            print_command_reply("vu_noise_calibrate inactive");
+        }
+        return;
+    }
+
+    constexpr const char kCalibrationPrefix[] = "vu_noise_calibrate";
+    constexpr std::size_t kCalibrationPrefixLength = sizeof(kCalibrationPrefix) - 1u;
+    if (std::strncmp(g_command_line.data(),
+                     kCalibrationPrefix,
+                     kCalibrationPrefixLength) == 0 &&
+        (g_command_line[kCalibrationPrefixLength] == '\0' ||
+         g_command_line[kCalibrationPrefixLength] == ' ')) {
+        uint32_t duration_ms = kDefaultVuCalibrationDurationMs;
+        if (g_command_line[kCalibrationPrefixLength] == ' ') {
+            char* end = nullptr;
+            const unsigned long parsed = std::strtoul(
+                g_command_line.data() + kCalibrationPrefixLength + 1u, &end, 10);
+            if (end == g_command_line.data() + kCalibrationPrefixLength + 1u ||
+                *end != '\0' || parsed < kMinimumVuCalibrationDurationMs ||
+                parsed > kMaximumVuCalibrationDurationMs) {
+                print_command_reply("vu_noise_calibrate invalid_duration");
+                return;
+            }
+            duration_ms = static_cast<uint32_t>(parsed);
+        }
+        begin_vu_calibration(duration_ms);
+        return;
+    }
+
+    print_command_reply("rejected unknown_command");
+}
+
+void service_usb_commands() {
+    constexpr std::size_t kMaximumCharactersPerLoop = 16u;
+    for (std::size_t count = 0u;
+         count < kMaximumCharactersPerLoop && tud_cdc_available() > 0u;
+         ++count) {
+        const int character = tud_cdc_read_char();
+        if (character < 0) {
+            return;
+        }
+
+        if (character == '\r' || character == '\n') {
+            if (g_command_discard_until_newline) {
+                g_command_discard_until_newline = false;
+            } else if (g_command_length != 0u) {
+                handle_command_line();
+            }
+            g_command_length = 0u;
+            continue;
+        }
+
+        if (g_command_discard_until_newline) {
+            continue;
+        }
+
+        if (g_command_length + 1u >= g_command_line.size()) {
+            g_command_discard_until_newline = true;
+            g_command_length = 0u;
+            print_command_reply("rejected line_too_long");
+            continue;
+        }
+
+        g_command_line[g_command_length++] = static_cast<char>(character);
+    }
+}
 
 void prepare_startup_report() {
     const int length = std::snprintf(
@@ -127,6 +342,47 @@ void print_telemetry() {
     tud_cdc_write_flush();
 }
 
+void print_vu_telemetry() {
+    DiagnosticEffectRuntimeSnapshot runtime{};
+    if (!g_renderer_available ||
+        !diagnostic_renderer_read_effect_runtime(0u, runtime)) {
+        return;
+    }
+
+    const uint16_t left_effective = g_audio_frame.left_peak >
+                                             runtime.config.gyver_left_noise_floor
+                                         ? static_cast<uint16_t>(
+                                               g_audio_frame.left_peak -
+                                               runtime.config.gyver_left_noise_floor)
+                                         : 0u;
+    const uint16_t right_effective = g_audio_frame.right_peak >
+                                              runtime.config.gyver_right_noise_floor
+                                          ? static_cast<uint16_t>(
+                                                g_audio_frame.right_peak -
+                                                runtime.config.gyver_right_noise_floor)
+                                          : 0u;
+    const int length = std::snprintf(
+        g_telemetry_line.data(),
+        g_telemetry_line.size(),
+        "DBG vu raw_l=%u raw_r=%u effective_l=%u effective_r=%u gate_l=%u gate_r=%u "
+        "ref_l=%u ref_r=%u floor_l=%u floor_r=%u hysteresis=%u calibration=%s\n",
+        g_audio_frame.left_peak,
+        g_audio_frame.right_peak,
+        left_effective,
+        right_effective,
+        runtime.left_gate_open ? 1u : 0u,
+        runtime.right_gate_open ? 1u : 0u,
+        runtime.left_reference,
+        runtime.right_reference,
+        runtime.config.gyver_left_noise_floor,
+        runtime.config.gyver_right_noise_floor,
+        runtime.config.gyver_noise_gate_hysteresis,
+        g_vu_calibration_active ? "running" : "idle");
+    if (length > 0 && static_cast<std::size_t>(length) < g_telemetry_line.size()) {
+        (void)write_usb_line(g_telemetry_line.data(), static_cast<std::size_t>(length));
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -150,9 +406,11 @@ int main() {
     uint64_t last_telemetry_us = 0;
     while (true) {
         diagnostic_renderer_service();
+        service_usb_commands();
 
         const uint64_t audio_work_start_us = time_us_64();
         if (audio_capture_process(g_audio_frame, g_centered_mono)) {
+            update_vu_calibration(g_audio_frame);
             const uint64_t analysis_start_us = time_us_64();
             const bool new_spectrum =
                 g_spectrum_analyzer.push(g_centered_mono, g_spectrum_frame);
@@ -191,16 +449,16 @@ int main() {
         }
 
         const uint64_t now_us = time_us_64();
-        if (!try_deliver_startup_report()) {
-            tight_loop_contents();
-            continue;
-        }
+        // Startup reporting is best effort. A disconnected or full CDC link
+        // must not suppress later bounded telemetry or command processing.
+        (void)try_deliver_startup_report();
 
         if (last_telemetry_us == 0u) {
             last_telemetry_us = now_us;
         } else if (now_us - last_telemetry_us >= kDiagnosticsPeriodUs) {
             last_telemetry_us = now_us;
             print_telemetry();
+            print_vu_telemetry();
         }
 
         tight_loop_contents();
