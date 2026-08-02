@@ -1,4 +1,4 @@
-# Pico Music Lights — Project Context
+# Pico Music Lights â€” Project Context
 
 ## Project goal
 
@@ -194,8 +194,8 @@ compromising audio continuity. Wi-Fi, web configuration and persistence will
 use the engine's application-facing configuration API in later features.
 
 The named future reset-default scene deliberately contains six value-copied, independent
-Stereo Centre-Out VU configurations. Each uses the shared Left/Right source,
-Off background, and a logical centre-to-end Green → Yellow → Orange → Red
+Gyver VU Gradient configurations. Each uses the shared Left/Right source,
+Off background, and a logical centre-to-end Green â†’ Yellow â†’ Orange â†’ Red
 gradient. This is a default scene only: no physical strip is a master and every
 strip may later select any compatible effect and parameters independently.
 
@@ -210,6 +210,14 @@ gradient and rainbow VU modes, mirrored/macro/one-band/spectrum frequency
 views, stroboscope, smooth colour cycle, running rainbow, and running
 frequencies. These are inspired by the user-visible AlexGyver ColorMusic modes,
 not a port of its Arduino hardware implementation.
+
+Feature 004 also keeps a separate Gyver-compatible catalog (referencing AlexGyver ColorMusic):
+stereo gradient/rainbow VU, adaptive 5-zone/3-zone/full-strip/running-frequency
+effects, mirrored spectrum, and RGBW strobe/ambient variants. These consume the
+same shared audio and spectrum frames once per cycle. Their adaptive detector,
+auto gain, background, colour history and configuration remain independent for
+each strip. The generic circular trail remains available under the explicit
+name `frequency_comet`.
 
 The internal pixel representation shall preserve all four physical channels.
 

@@ -8,9 +8,11 @@ namespace {
 constexpr uint16_t kMaximumAnimationSpeedQ8 = 4096u;
 constexpr uint16_t kMaximumColorSpacingQ8 = 4096u;
 constexpr uint8_t kMaximumStrobeFrequencyHz = 30u;
+constexpr uint16_t kMinimumAdaptiveTriggerPercent = 100u;
+constexpr uint16_t kMaximumAdaptiveTriggerPercent = 1000u;
 
 bool is_valid_effect_type(EffectType type) {
-    return type <= EffectType::running_frequency;
+    return type <= EffectType::gyver_spectrum_analyzer;
 }
 
 bool is_valid_effect_source(EffectSource source) {
@@ -27,6 +29,24 @@ bool is_valid_vu_color_mode(VuColorMode mode) {
 
 bool is_valid_frequency_selection(FrequencySelection selection) {
     return selection <= FrequencySelection::high;
+}
+
+bool is_valid_gyver_full_strip_selection(
+    GyverFullStripSelectionPolicy selection) {
+    return selection <= GyverFullStripSelectionPolicy::strongest_event;
+}
+
+bool is_gyver_adaptive_frequency_effect(EffectType type) {
+    switch (type) {
+    case EffectType::gyver_frequency_5_zones:
+    case EffectType::gyver_frequency_3_zones:
+    case EffectType::gyver_frequency_full_strip:
+    case EffectType::gyver_running_frequencies:
+        return true;
+
+    default:
+        return false;
+    }
 }
 
 bool requires_state_reset(const StripEffectConfig& active,
@@ -59,8 +79,13 @@ bool requires_state_reset(const StripEffectConfig& active,
     }
 
     if ((active.type == EffectType::one_band_frequency ||
-         active.type == EffectType::running_frequency) &&
+         active.type == EffectType::frequency_comet) &&
         active.frequency_selection != proposed.frequency_selection) {
+        return true;
+    }
+
+    if (active.type == EffectType::gyver_frequency_full_strip &&
+        active.gyver_full_strip_selection != proposed.gyver_full_strip_selection) {
         return true;
     }
 
@@ -96,12 +121,31 @@ bool is_source_compatible(const StripEffectConfig& config) {
         return config.source == EffectSource::macro_bands;
 
     case EffectType::one_band_frequency:
-    case EffectType::running_frequency:
+    case EffectType::frequency_comet:
         return config.source == EffectSource::macro_bands;
 
     case EffectType::stroboscope:
     case EffectType::ambient_color_cycle:
     case EffectType::running_rainbow:
+        return config.source == EffectSource::none;
+
+    case EffectType::gyver_vu_gradient:
+    case EffectType::gyver_vu_rainbow:
+        return config.source == EffectSource::stereo_left_right;
+
+    case EffectType::gyver_frequency_5_zones:
+    case EffectType::gyver_frequency_3_zones:
+    case EffectType::gyver_frequency_full_strip:
+    case EffectType::gyver_running_frequencies:
+        return config.source == EffectSource::macro_bands;
+
+    case EffectType::gyver_spectrum_analyzer:
+        return config.source == EffectSource::spectrum_32;
+
+    case EffectType::gyver_stroboscope:
+    case EffectType::gyver_ambient_static:
+    case EffectType::gyver_ambient_color_cycle:
+    case EffectType::gyver_ambient_running_rainbow:
         return config.source == EffectSource::none;
     }
 
@@ -146,7 +190,8 @@ EffectStatus EffectEngine::validate_config(const StripEffectConfig& config) cons
     }
 
     if (!is_valid_vu_color_mode(config.vu_color_mode) ||
-        !is_valid_frequency_selection(config.frequency_selection)) {
+        !is_valid_frequency_selection(config.frequency_selection) ||
+        !is_valid_gyver_full_strip_selection(config.gyver_full_strip_selection)) {
         return EffectStatus::invalid_parameter;
     }
 
@@ -160,11 +205,22 @@ EffectStatus EffectEngine::validate_config(const StripEffectConfig& config) cons
         config.fade_decay_ms > kEffectMaximumResponseMs ||
         config.animation_speed_q8 > kMaximumAnimationSpeedQ8 ||
         config.color_spacing_q8 > kMaximumColorSpacingQ8 ||
-        config.strobe_fade_ms > kEffectMaximumResponseMs) {
+        config.strobe_fade_ms > kEffectMaximumResponseMs ||
+        config.background_brightness_q8 > kEffectMaximumGain ||
+        config.adaptive_fast_response_ms > kEffectMaximumResponseMs ||
+        config.adaptive_average_response_ms > kEffectMaximumResponseMs ||
+        config.adaptive_event_decay_ms > kEffectMaximumResponseMs ||
+        config.gyver_animation_interval_ms > kEffectMaximumResponseMs ||
+        config.auto_gain_headroom_q8 < kEffectUnityGain ||
+        config.auto_gain_headroom_q8 > kEffectMaximumGain ||
+        config.adaptive_trigger_percent < kMinimumAdaptiveTriggerPercent ||
+        config.adaptive_trigger_percent > kMaximumAdaptiveTriggerPercent ||
+        config.strobe_duty_percent > 100u) {
         return EffectStatus::invalid_parameter;
     }
 
-    if (config.type == EffectType::stroboscope &&
+    if ((config.type == EffectType::stroboscope ||
+         config.type == EffectType::gyver_stroboscope) &&
         (config.strobe_frequency_hz == 0u ||
          config.strobe_frequency_hz > kMaximumStrobeFrequencyHz)) {
         return EffectStatus::invalid_parameter;
@@ -188,6 +244,13 @@ EffectStatus EffectEngine::validate_config(const StripEffectConfig& config) cons
 
     if (config.type == EffectType::macro_bands &&
         config.macro_region_count != 3u && config.macro_region_count != 4u) {
+        return EffectStatus::invalid_parameter;
+    }
+
+    if (is_gyver_adaptive_frequency_effect(config.type) &&
+        (config.adaptive_fast_response_ms == 0u ||
+         config.adaptive_average_response_ms == 0u ||
+         config.gyver_animation_interval_ms == 0u)) {
         return EffectStatus::invalid_parameter;
     }
 

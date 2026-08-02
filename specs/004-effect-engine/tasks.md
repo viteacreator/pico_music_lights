@@ -1,4 +1,4 @@
-# Feature 004 — Tasks
+# Feature 004 â€” Tasks
 
 - [x] Define fixed engine configuration, state, source compatibility and
   atomic pending-scene API.
@@ -20,6 +20,17 @@
 - [x] Preserve 30 Hz, LED-busy skip, and audio-priority scheduling.
 - [x] Stabilize per-pixel hue spacing, per-zone once-per-frame smoothing,
   minimum-step convergence, edge geometry, and independent effect state.
+- [x] Rename the generic circular running-frequency effect to
+  `frequency_comet` and add separate Gyver-compatible effect identifiers.
+- [x] Add bounded per-strip adaptive Low/Mid/High event state, auto-gain
+  references, RGBW half-history, parameter validation, and reset rules.
+- [x] Implement Alex stereo VU, adaptive frequency layouts, Full Strip policy,
+  mirrored running frequencies, mirrored 32-band spectrum, and RGBW
+  ambient/strobe variants without changing generic effects.
+- [x] Update reset-default data to six Gyver VU Gradient configurations and
+  expand isolated diagnostic scenes to cover Alex and generic catalogs.
+- [x] Add focused Alex catalog host regressions for event layouts, policies,
+  auto gain, centre history, short spans, reset data and scene cycling.
 - [ ] Configure, compile and execute all five warning-enabled native host
   targets after the stabilization regressions: `led_logic_tests`,
   `audio_processing_tests`, `spectrum_analysis_tests`,

@@ -661,25 +661,46 @@ void render_stroboscope(StripEffectRuntime& runtime,
     runtime.state.strobe_phase = static_cast<uint16_t>(
         runtime.state.strobe_phase + phase_increment);
 
+    const uint32_t duty_fraction = std::min<uint32_t>(
+        65535u,
+        static_cast<uint32_t>(runtime.config.strobe_duty_percent) * 65535u / 100u);
     const uint32_t fade_fraction = std::min<uint32_t>(
         65535u,
         (static_cast<uint32_t>(runtime.config.strobe_fade_ms) * 65535u +
          cycle_ms / 2u) /
             std::max<uint32_t>(1u, cycle_ms));
     uint16_t gate = 0u;
-    if (runtime.state.strobe_phase < fade_fraction) {
+    if (runtime.state.strobe_phase < duty_fraction) {
+        const uint32_t fade_start = duty_fraction > fade_fraction
+                                        ? duty_fraction - fade_fraction
+                                        : 0u;
         gate = fade_fraction == 0u
                    ? 65535u
-                   : static_cast<uint16_t>(
-                         65535u - static_cast<uint32_t>(runtime.state.strobe_phase) *
-                                      65535u / fade_fraction);
+                   : (runtime.state.strobe_phase < fade_start
+                          ? 65535u
+                          : static_cast<uint16_t>(
+                                (static_cast<uint32_t>(duty_fraction -
+                                                       runtime.state.strobe_phase) *
+                                 65535u) / fade_fraction));
     }
 
     runtime.state.strobe_level = static_cast<uint16_t>(
         (static_cast<uint32_t>(target) * gate + 32767u) / 65535u);
+    const RgbwColor background = runtime.config.type == EffectType::gyver_stroboscope
+                                     ? scale_color(runtime.config.background_color,
+                                                   static_cast<uint16_t>(
+                                                       (static_cast<uint32_t>(
+                                                            std::min<uint16_t>(
+                                                                runtime.config
+                                                                    .background_brightness_q8,
+                                                                kEffectUnityGain)) *
+                                                        65535u +
+                                                        kEffectUnityGain / 2u) /
+                                                       kEffectUnityGain))
+                                     : runtime.config.background_color;
     fill_span(destination,
               level_color(runtime.config.primary_color,
-                          runtime.config.background_color,
+                          background,
                           runtime.state.strobe_level));
 }
 
@@ -714,10 +735,10 @@ void render_running_rainbow(StripEffectRuntime& runtime,
     }
 }
 
-void render_running_frequency(StripEffectRuntime& runtime,
-                              const EffectInputSnapshot& snapshot,
-                              EffectRenderSpan destination,
-                              uint32_t elapsed) {
+void render_frequency_comet(StripEffectRuntime& runtime,
+                            const EffectInputSnapshot& snapshot,
+                            EffectRenderSpan destination,
+                            uint32_t elapsed) {
     fill_span(destination, runtime.config.background_color);
     if (destination.pixel_count == 0u) {
         return;
@@ -763,6 +784,329 @@ void render_running_frequency(StripEffectRuntime& runtime,
                     level_color(runtime.config.primary_color,
                                 runtime.config.background_color,
                                 trail));
+    }
+}
+
+RgbwColor gyver_background(const StripEffectConfig& config) {
+    const uint16_t brightness = std::min<uint16_t>(
+        config.background_brightness_q8,
+        kEffectUnityGain);
+    return scale_color(config.background_color,
+                       static_cast<uint16_t>(
+                           (static_cast<uint32_t>(brightness) * 65535u +
+                            kEffectUnityGain / 2u) /
+                           kEffectUnityGain));
+}
+
+uint16_t apply_gyver_auto_gain(StripEffectRuntime& runtime,
+                              std::size_t reference_index,
+                              uint16_t level,
+                              uint32_t elapsed) {
+    if (!runtime.config.auto_gain_enabled ||
+        reference_index >= runtime.state.auto_gain_references.size()) {
+        return level;
+    }
+
+    uint16_t& reference = runtime.state.auto_gain_references[reference_index];
+    reference = smooth_level(reference,
+                             level,
+                             runtime.config.adaptive_average_response_ms,
+                             runtime.config.adaptive_average_response_ms,
+                             elapsed);
+
+    if (reference == 0u) {
+        return 0u;
+    }
+
+    const uint32_t denominator = std::max<uint32_t>(
+        1u,
+        (static_cast<uint32_t>(reference) *
+         runtime.config.auto_gain_headroom_q8 + kEffectUnityGain / 2u) /
+            kEffectUnityGain);
+    return static_cast<uint16_t>(std::min<uint32_t>(
+        65535u,
+        (static_cast<uint32_t>(level) * 65535u + denominator / 2u) /
+            denominator));
+}
+
+void render_gyver_stereo_vu(StripEffectRuntime& runtime,
+                           const EffectInputSnapshot& snapshot,
+                           EffectRenderSpan destination,
+                           uint32_t elapsed,
+                           bool rainbow) {
+    fill_span(destination, gyver_background(runtime.config));
+    const uint16_t left = apply_gyver_auto_gain(
+        runtime,
+        0u,
+        scalar_level(EffectSource::left, snapshot),
+        elapsed);
+    const uint16_t right = apply_gyver_auto_gain(
+        runtime,
+        1u,
+        scalar_level(EffectSource::right, snapshot),
+        elapsed);
+    const std::size_t left_capacity = (destination.pixel_count + 1u) / 2u;
+    const std::size_t right_capacity = destination.pixel_count / 2u;
+    const std::size_t left_lit = lit_count(left_capacity, left);
+    const std::size_t right_lit = lit_count(right_capacity, right);
+    const std::size_t left_centre = (destination.pixel_count - 1u) / 2u;
+    const std::size_t right_centre = destination.pixel_count / 2u;
+
+    if (rainbow) {
+        advance_vu_rainbow_phase(runtime.state,
+                                  runtime.config.animation_speed_q8,
+                                  elapsed);
+    }
+
+    for (std::size_t distance = 0u; distance < left_lit; ++distance) {
+        const RgbwColor color = rainbow
+                                    ? rainbow_color(static_cast<uint16_t>(
+                                          (runtime.state.animation_phase +
+                                           pixel_hue_offset(runtime.config,
+                                                            distance)) %
+                                          kRainbowHuePeriod))
+                                    : vu_gradient_color(runtime.config,
+                                                        distance,
+                                                        left_capacity);
+        write_pixel(destination,
+                    runtime.config.reversed,
+                    left_centre - distance,
+                    color);
+    }
+
+    const bool odd_length = (destination.pixel_count % 2u) != 0u;
+    const std::size_t right_first_distance = odd_length ? 1u : 0u;
+    if (odd_length && (left_lit != 0u || right_lit != 0u)) {
+        const RgbwColor centre_color = rainbow
+                                           ? rainbow_color(runtime.state.animation_phase)
+                                           : vu_gradient_color(runtime.config,
+                                                               0u,
+                                                               left_capacity);
+        write_pixel(destination,
+                    runtime.config.reversed,
+                    left_centre,
+                    centre_color);
+    }
+
+    for (std::size_t distance = right_first_distance;
+         distance < right_lit + right_first_distance;
+         ++distance) {
+        if (right_centre + distance >= destination.pixel_count) {
+            break;
+        }
+        const RgbwColor color = rainbow
+                                    ? rainbow_color(static_cast<uint16_t>(
+                                          (runtime.state.animation_phase +
+                                           pixel_hue_offset(runtime.config,
+                                                            distance)) %
+                                          kRainbowHuePeriod))
+                                    : vu_gradient_color(runtime.config,
+                                                        distance,
+                                                        right_capacity);
+        write_pixel(destination,
+                    runtime.config.reversed,
+                    right_centre + distance,
+                    color);
+    }
+}
+
+std::array<uint16_t, kEffectAdaptiveMacroBandCount> gyver_macro_levels(
+    const EffectInputSnapshot& snapshot) {
+    if (snapshot.spectrum == nullptr) {
+        return {};
+    }
+
+    return {std::max(snapshot.spectrum->raw_bass, snapshot.spectrum->raw_low),
+            snapshot.spectrum->raw_mid,
+            snapshot.spectrum->raw_high};
+}
+
+std::array<uint16_t, kEffectAdaptiveMacroBandCount> update_gyver_events(
+    StripEffectRuntime& runtime,
+    const EffectInputSnapshot& snapshot,
+    uint32_t elapsed) {
+    const std::array<uint16_t, kEffectAdaptiveMacroBandCount> inputs =
+        gyver_macro_levels(snapshot);
+    std::array<uint16_t, kEffectAdaptiveMacroBandCount> events{};
+
+    for (std::size_t index = 0u; index < events.size(); ++index) {
+        uint16_t& fast = runtime.state.adaptive_fast_levels[index];
+        uint16_t& average = runtime.state.adaptive_average_levels[index];
+        uint16_t& event = runtime.state.adaptive_event_levels[index];
+        if (average == 0u && fast == 0u) {
+            fast = inputs[index];
+            average = inputs[index];
+            event = 0u;
+            events[index] = 0u;
+            continue;
+        }
+
+        fast = smooth_level(fast,
+                            inputs[index],
+                            runtime.config.adaptive_fast_response_ms,
+                            runtime.config.adaptive_fast_response_ms,
+                            elapsed);
+        average = smooth_level(average,
+                               fast,
+                               runtime.config.adaptive_average_response_ms,
+                               runtime.config.adaptive_average_response_ms,
+                               elapsed);
+        const uint32_t threshold =
+            static_cast<uint32_t>(average) * runtime.config.adaptive_trigger_percent /
+            100u;
+        if (fast > threshold && fast != 0u) {
+            event = saturating_gain(65535u, runtime.config.visual_gain);
+        } else {
+            event = smooth_level(event,
+                                 0u,
+                                 runtime.config.adaptive_event_decay_ms,
+                                 runtime.config.adaptive_event_decay_ms,
+                                 elapsed);
+        }
+        events[index] = event;
+    }
+    return events;
+}
+
+void render_gyver_frequency_zones(StripEffectRuntime& runtime,
+                                 const EffectInputSnapshot& snapshot,
+                                 EffectRenderSpan destination,
+                                 uint32_t elapsed,
+                                 bool five_zones) {
+    fill_span(destination, gyver_background(runtime.config));
+    const std::array<uint16_t, kEffectAdaptiveMacroBandCount> events =
+        update_gyver_events(runtime, snapshot, elapsed);
+    constexpr std::array<uint8_t, 5> kFive{{2u, 1u, 0u, 1u, 2u}};
+    constexpr std::array<uint8_t, 3> kThree{{2u, 1u, 0u}};
+    const std::size_t count = five_zones ? kFive.size() : kThree.size();
+    for (std::size_t pixel = 0u; pixel < destination.pixel_count; ++pixel) {
+        const std::size_t mapped = runtime.config.reversed
+                                       ? destination.pixel_count - 1u - pixel
+                                       : pixel;
+        const std::size_t zone = std::min(count - 1u,
+                                          mapped * count / destination.pixel_count);
+        const uint8_t group = five_zones ? kFive[zone] : kThree[zone];
+        write_pixel(destination, false, pixel,
+                    level_color(runtime.config.gyver_frequency_colors[group],
+                                gyver_background(runtime.config), events[group]));
+    }
+}
+
+void render_gyver_full_strip(StripEffectRuntime& runtime,
+                            const EffectInputSnapshot& snapshot,
+                            EffectRenderSpan destination,
+                            uint32_t elapsed) {
+    const auto events = update_gyver_events(runtime, snapshot, elapsed);
+    std::size_t selected = 0u;
+    if (runtime.config.gyver_full_strip_selection ==
+        GyverFullStripSelectionPolicy::gyver_priority) {
+        selected = events[2u] != 0u ? 2u : (events[1u] != 0u ? 1u : 0u);
+    } else {
+        selected = events[1u] > events[selected] ? 1u : selected;
+        selected = events[2u] > events[selected] ? 2u : selected;
+    }
+    fill_span(destination,
+              level_color(runtime.config.gyver_frequency_colors[selected],
+                          gyver_background(runtime.config), events[selected]));
+}
+
+void render_gyver_running_frequencies(StripEffectRuntime& runtime,
+                                     const EffectInputSnapshot& snapshot,
+                                     EffectRenderSpan destination,
+                                     uint32_t elapsed) {
+    fill_span(destination, gyver_background(runtime.config));
+    const std::size_t half = (destination.pixel_count + 1u) / 2u;
+    if (half == 0u) {
+        return;
+    }
+    const auto events = update_gyver_events(runtime, snapshot, elapsed);
+    std::size_t chosen = 0u;
+    chosen = events[1u] > events[chosen] ? 1u : chosen;
+    chosen = events[2u] > events[chosen] ? 2u : chosen;
+    runtime.state.gyver_animation_elapsed_ms = static_cast<uint16_t>(
+        std::min<uint32_t>(kMaximumElapsedMs,
+                           runtime.state.gyver_animation_elapsed_ms + elapsed));
+    const uint32_t interval = std::max<uint32_t>(
+        1u,
+        runtime.config.gyver_animation_interval_ms);
+    const uint32_t steps = runtime.state.gyver_animation_elapsed_ms / interval;
+    runtime.state.gyver_animation_elapsed_ms = static_cast<uint16_t>(
+        runtime.state.gyver_animation_elapsed_ms % interval);
+    const std::size_t history = std::min<std::size_t>(half,
+        runtime.state.gyver_running_frequency_history.size());
+    for (uint32_t step = 0u; step < steps; ++step) {
+        for (std::size_t index = history; index-- > 1u;) {
+            runtime.state.gyver_running_frequency_history[index] =
+                runtime.state.gyver_running_frequency_history[index - 1u];
+        }
+        runtime.state.gyver_running_frequency_history[0] =
+            level_color(runtime.config.gyver_frequency_colors[chosen],
+                        gyver_background(runtime.config), events[chosen]);
+    }
+    runtime.state.gyver_running_frequency_history_length =
+        static_cast<uint16_t>(history);
+    const std::size_t left_centre = (destination.pixel_count - 1u) / 2u;
+    const std::size_t right_centre = destination.pixel_count / 2u;
+    for (std::size_t distance = 0u; distance < history; ++distance) {
+        const RgbwColor color = runtime.state.gyver_running_frequency_history[distance];
+        if (left_centre >= distance) {
+            write_pixel(destination, runtime.config.reversed, left_centre - distance, color);
+        }
+        const std::size_t right = right_centre + distance;
+        if (right < destination.pixel_count && right != left_centre) {
+            write_pixel(destination, runtime.config.reversed, right, color);
+        }
+    }
+}
+
+void render_gyver_spectrum(StripEffectRuntime& runtime,
+                          const EffectInputSnapshot& snapshot,
+                          EffectRenderSpan destination,
+                          uint32_t elapsed) {
+    fill_span(destination, gyver_background(runtime.config));
+    const std::size_t half = (destination.pixel_count + 1u) / 2u;
+    if (half == 0u) {
+        return;
+    }
+    std::array<uint16_t, kSpectrumBandCount> bands{};
+    resample_raw_spectrum(snapshot.spectrum, bands.data(), kSpectrumBandCount);
+    uint16_t peak = 0u;
+    for (const uint16_t band : bands) {
+        peak = std::max(peak, band);
+    }
+    const uint16_t gain_reference = apply_gyver_auto_gain(runtime,
+                                                          2u,
+                                                          peak,
+                                                          elapsed);
+    std::array<uint16_t, kSpectrumBandCount> smoothed{};
+    for (std::size_t band = 0u; band < bands.size(); ++band) {
+        const uint16_t normalized = peak == 0u || gain_reference == 0u
+                                        ? 0u
+                                        : static_cast<uint16_t>(
+                                              (static_cast<uint32_t>(bands[band]) *
+                                               gain_reference + peak / 2u) /
+                                              peak);
+        smoothed[band] = update_level(runtime, band, normalized, elapsed);
+    }
+    const std::size_t left_centre = (destination.pixel_count - 1u) / 2u;
+    const std::size_t right_centre = destination.pixel_count / 2u;
+    for (std::size_t distance = 0u; distance < half; ++distance) {
+        const std::size_t band = std::min<std::size_t>(kSpectrumBandCount - 1u,
+            distance * kSpectrumBandCount / half);
+        const uint16_t level = smoothed[band];
+        const RgbwColor color = level_color(spectrum_color(runtime.config, band,
+                                                             kSpectrumBandCount),
+                                            gyver_background(runtime.config), level);
+        if (left_centre >= distance) {
+            write_pixel(destination,
+                        runtime.config.reversed,
+                        left_centre - distance,
+                        color);
+        }
+        const std::size_t right = right_centre + distance;
+        if (right < destination.pixel_count && right != left_centre) {
+            write_pixel(destination, runtime.config.reversed, right, color);
+        }
     }
 }
 
@@ -835,8 +1179,67 @@ void render_effect(StripEffectRuntime& runtime,
         render_running_rainbow(runtime, destination, elapsed);
         return;
 
-    case EffectType::running_frequency:
-        render_running_frequency(runtime, snapshot, destination, elapsed);
+    case EffectType::frequency_comet:
+        render_frequency_comet(runtime, snapshot, destination, elapsed);
+        return;
+
+    case EffectType::gyver_vu_gradient:
+        render_gyver_stereo_vu(runtime,
+                              snapshot,
+                              destination,
+                              elapsed,
+                              false);
+        return;
+
+    case EffectType::gyver_vu_rainbow:
+        render_gyver_stereo_vu(runtime,
+                              snapshot,
+                              destination,
+                              elapsed,
+                              true);
+        return;
+
+    case EffectType::gyver_frequency_5_zones:
+        render_gyver_frequency_zones(runtime, snapshot, destination, elapsed, true);
+        return;
+
+    case EffectType::gyver_frequency_3_zones:
+        render_gyver_frequency_zones(runtime, snapshot, destination, elapsed, false);
+        return;
+
+    case EffectType::gyver_frequency_full_strip:
+        render_gyver_full_strip(runtime, snapshot, destination, elapsed);
+        return;
+
+    case EffectType::gyver_stroboscope:
+        render_stroboscope(runtime, destination, elapsed);
+        return;
+
+    case EffectType::gyver_ambient_static:
+        fill_span(destination,
+                  scale_color(
+                      runtime.config.static_color_mode ==
+                              StaticColorMode::white_boost
+                          ? white_boost_color(runtime.config)
+                          : runtime.config.primary_color,
+                      saturating_gain(65535u,
+                                      runtime.config.visual_gain)));
+        return;
+
+    case EffectType::gyver_ambient_color_cycle:
+        render_ambient_color_cycle(runtime, destination, elapsed);
+        return;
+
+    case EffectType::gyver_ambient_running_rainbow:
+        render_running_rainbow(runtime, destination, elapsed);
+        return;
+
+    case EffectType::gyver_running_frequencies:
+        render_gyver_running_frequencies(runtime, snapshot, destination, elapsed);
+        return;
+
+    case EffectType::gyver_spectrum_analyzer:
+        render_gyver_spectrum(runtime, snapshot, destination, elapsed);
         return;
     }
 }

@@ -8,6 +8,7 @@
 namespace {
 
 using effects::EffectEngine;
+using effects::GyverFullStripSelectionPolicy;
 using effects::EffectInputSnapshot;
 using effects::EffectRenderSpan;
 using effects::EffectSource;
@@ -43,6 +44,17 @@ bool configurations_equal(const StripEffectConfig& first,
         }
     }
 
+    bool gyver_colors_equal = true;
+    for (std::size_t index = 0u;
+         index < first.gyver_frequency_colors.size();
+         ++index) {
+        if (!colors_equal(first.gyver_frequency_colors[index],
+                          second.gyver_frequency_colors[index])) {
+            gyver_colors_equal = false;
+            break;
+        }
+    }
+
     return first.enabled == second.enabled && first.type == second.type &&
            first.source == second.source &&
            colors_equal(first.primary_color, second.primary_color) &&
@@ -54,11 +66,21 @@ bool configurations_equal(const StripEffectConfig& first,
            colors_equal(first.rgb_assist_color, second.rgb_assist_color) &&
            first.vu_color_mode == second.vu_color_mode &&
            first.frequency_selection == second.frequency_selection &&
+           first.gyver_full_strip_selection == second.gyver_full_strip_selection &&
+           gyver_colors_equal &&
            first.animation_speed_q8 == second.animation_speed_q8 &&
            first.color_spacing_q8 == second.color_spacing_q8 &&
            first.fade_decay_ms == second.fade_decay_ms &&
            first.strobe_frequency_hz == second.strobe_frequency_hz &&
+           first.strobe_duty_percent == second.strobe_duty_percent &&
            first.strobe_fade_ms == second.strobe_fade_ms &&
+           first.background_brightness_q8 == second.background_brightness_q8 &&
+           first.auto_gain_enabled == second.auto_gain_enabled &&
+           first.adaptive_fast_response_ms == second.adaptive_fast_response_ms &&
+           first.adaptive_average_response_ms == second.adaptive_average_response_ms &&
+           first.adaptive_trigger_percent == second.adaptive_trigger_percent &&
+           first.adaptive_event_decay_ms == second.adaptive_event_decay_ms &&
+           first.gyver_animation_interval_ms == second.gyver_animation_interval_ms &&
            first.reversed == second.reversed &&
            first.visual_gain == second.visual_gain &&
            first.attack_ms == second.attack_ms &&
@@ -109,7 +131,7 @@ bool test_default_scene_and_configuration_api() {
 
     StripEffectConfig canonical{};
     if (!engine.read_config(0u, canonical) || !canonical.enabled ||
-        canonical.type != EffectType::stereo_center_out_vu ||
+        canonical.type != EffectType::gyver_vu_gradient ||
         canonical.source != EffectSource::stereo_left_right ||
         canonical.vu_color_mode != VuColorMode::level_position_gradient ||
         !is_off(canonical.background_color) || canonical.attack_ms == 0u ||
@@ -198,6 +220,7 @@ bool test_validation_and_atomic_scene_staging() {
     config.enabled = true;
     config.type = EffectType::stroboscope;
     config.source = EffectSource::none;
+    config.strobe_frequency_hz = 0u;
     if (engine.validate_config(config) != EffectStatus::invalid_parameter) {
         return false;
     }
@@ -223,7 +246,7 @@ bool test_validation_and_atomic_scene_staging() {
 
     StripEffectConfig active{};
     if (!engine.read_config(0u, active) ||
-        active.type != EffectType::stereo_center_out_vu) {
+        active.type != EffectType::gyver_vu_gradient) {
         return false;
     }
 
@@ -807,7 +830,7 @@ bool test_catalog_dynamic_effects_and_independent_state() {
     scene[3].color_spacing_q8 = 256u;
 
     scene[4].enabled = true;
-    scene[4].type = EffectType::running_frequency;
+    scene[4].type = EffectType::frequency_comet;
     scene[4].source = EffectSource::macro_bands;
     scene[4].frequency_selection = FrequencySelection::high;
     scene[4].primary_color = kBlue;
@@ -1042,7 +1065,7 @@ bool test_all_effects_handle_short_spans_without_out_of_bounds_writes() {
     spectrum.raw_mid = 65535u;
     spectrum.raw_high = 65535u;
 
-    std::array<StripEffectConfig, 12> configurations{};
+    std::array<StripEffectConfig, 23> configurations{};
     configurations[0] = {true, EffectType::static_rgbw, EffectSource::none};
     configurations[0].primary_color = kWhite;
     configurations[1] = scalar_config(EffectSource::left, kRed);
@@ -1075,11 +1098,33 @@ bool test_all_effects_handle_short_spans_without_out_of_bounds_writes() {
     configurations[9].type = EffectType::running_rainbow;
     configurations[9].source = EffectSource::none;
     configurations[10].enabled = true;
-    configurations[10].type = EffectType::running_frequency;
+    configurations[10].type = EffectType::frequency_comet;
     configurations[10].source = EffectSource::macro_bands;
     configurations[11].enabled = true;
     configurations[11].type = EffectType::off;
     configurations[11].source = EffectSource::none;
+    configurations[12] = configurations[2];
+    configurations[12].type = EffectType::gyver_vu_gradient;
+    configurations[13] = configurations[12];
+    configurations[13].type = EffectType::gyver_vu_rainbow;
+    configurations[14] = configurations[5];
+    configurations[14].type = EffectType::gyver_frequency_5_zones;
+    configurations[15] = configurations[14];
+    configurations[15].type = EffectType::gyver_frequency_3_zones;
+    configurations[16] = configurations[14];
+    configurations[16].type = EffectType::gyver_frequency_full_strip;
+    configurations[17] = configurations[7];
+    configurations[17].type = EffectType::gyver_stroboscope;
+    configurations[18] = configurations[0];
+    configurations[18].type = EffectType::gyver_ambient_static;
+    configurations[19] = configurations[8];
+    configurations[19].type = EffectType::gyver_ambient_color_cycle;
+    configurations[20] = configurations[9];
+    configurations[20].type = EffectType::gyver_ambient_running_rainbow;
+    configurations[21] = configurations[14];
+    configurations[21].type = EffectType::gyver_running_frequencies;
+    configurations[22] = configurations[3];
+    configurations[22].type = EffectType::gyver_spectrum_analyzer;
 
     for (const StripEffectConfig& config : configurations) {
         EffectEngine engine;
@@ -1112,7 +1157,7 @@ bool test_reset_default_and_diagnostic_scene_data() {
         effects::reset_default_scene();
     for (const StripEffectConfig& config : reset) {
         if (!config.enabled ||
-            config.type != EffectType::stereo_center_out_vu ||
+            config.type != EffectType::gyver_vu_gradient ||
             config.source != EffectSource::stereo_left_right ||
             config.vu_color_mode != VuColorMode::level_position_gradient ||
             !is_off(config.background_color) ||
@@ -1123,30 +1168,50 @@ bool test_reset_default_and_diagnostic_scene_data() {
     }
 
     const std::array<StripEffectConfig, effects::kEffectStripCount> first =
-        effects::diagnostic_scene(effects::DiagnosticSceneId::vu_and_ambient);
+        effects::diagnostic_scene(
+            effects::DiagnosticSceneId::gyver_vu_and_ambient);
     const std::array<StripEffectConfig, effects::kEffectStripCount> second =
         effects::diagnostic_scene(
-            effects::DiagnosticSceneId::spectrum_and_motion);
-    if (first[0].type != EffectType::scalar_vu ||
-        first[1].vu_color_mode != VuColorMode::animated_rainbow ||
-        first[2].type != EffectType::static_rgbw ||
-        first[3].type != EffectType::stroboscope ||
-        first[4].type != EffectType::ambient_color_cycle ||
-        first[5].type != EffectType::running_rainbow ||
-        second[0].type != EffectType::spectrum_bars ||
-        second[1].type != EffectType::mirrored_spectrum_zones ||
-        second[2].type != EffectType::macro_bands ||
-        second[3].type != EffectType::one_band_frequency ||
-        second[4].type != EffectType::running_frequency ||
-        second[5].static_color_mode != StaticColorMode::white_boost ||
+            effects::DiagnosticSceneId::gyver_frequency_and_spectrum);
+    const std::array<StripEffectConfig, effects::kEffectStripCount> third =
+        effects::diagnostic_scene(effects::DiagnosticSceneId::extended_generic);
+    const std::array<StripEffectConfig, effects::kEffectStripCount> fourth =
+        effects::diagnostic_scene(
+            effects::DiagnosticSceneId::extended_ambient_and_frequency);
+    EffectEngine validation_engine;
+    for (const auto& scene : {first, second, third, fourth, reset}) {
+        if (validation_engine.stage_scene(scene) != EffectStatus::ok) {
+            return false;
+        }
+    }
+    if (first[0].type != EffectType::gyver_vu_gradient ||
+        first[1].type != EffectType::gyver_vu_rainbow ||
+        first[2].type != EffectType::gyver_ambient_static ||
+        first[3].type != EffectType::gyver_stroboscope ||
+        first[4].type != EffectType::gyver_ambient_color_cycle ||
+        first[5].type != EffectType::gyver_ambient_running_rainbow ||
+        second[0].type != EffectType::gyver_frequency_5_zones ||
+        second[1].type != EffectType::gyver_frequency_3_zones ||
+        second[2].type != EffectType::gyver_frequency_full_strip ||
+        second[3].type != EffectType::gyver_running_frequencies ||
+        second[4].type != EffectType::gyver_spectrum_analyzer ||
+        second[5].type != EffectType::gyver_ambient_static ||
+        third[4].type != EffectType::frequency_comet ||
+        fourth[3].type != EffectType::one_band_frequency ||
         effects::diagnostic_scene_duration_ms(
-            effects::DiagnosticSceneId::vu_and_ambient) == 0u ||
+            effects::DiagnosticSceneId::gyver_vu_and_ambient) == 0u ||
         effects::next_diagnostic_scene(
-            effects::DiagnosticSceneId::vu_and_ambient) !=
-            effects::DiagnosticSceneId::spectrum_and_motion ||
+            effects::DiagnosticSceneId::gyver_vu_and_ambient) !=
+            effects::DiagnosticSceneId::gyver_frequency_and_spectrum ||
         effects::next_diagnostic_scene(
-            effects::DiagnosticSceneId::spectrum_and_motion) !=
-            effects::DiagnosticSceneId::vu_and_ambient) {
+            effects::DiagnosticSceneId::gyver_frequency_and_spectrum) !=
+            effects::DiagnosticSceneId::extended_generic ||
+        effects::next_diagnostic_scene(
+            effects::DiagnosticSceneId::extended_generic) !=
+            effects::DiagnosticSceneId::extended_ambient_and_frequency ||
+        effects::next_diagnostic_scene(
+            effects::DiagnosticSceneId::extended_ambient_and_frequency) !=
+            effects::DiagnosticSceneId::gyver_vu_and_ambient) {
         return false;
     }
 
@@ -1173,6 +1238,157 @@ bool test_reset_default_and_diagnostic_scene_data() {
     return engine.configuration_generation() == generation_before + 2u;
 }
 
+bool test_gyver_adaptive_catalog() {
+    AudioLevelFrame audio{};
+    SpectrumFrame spectrum{};
+    spectrum.raw_low = 1000u;
+    spectrum.raw_mid = 1000u;
+    spectrum.raw_high = 1000u;
+
+    std::array<StripEffectConfig, effects::kEffectStripCount> scene =
+        off_scene();
+    StripEffectConfig zones{};
+    zones.enabled = true;
+    zones.type = EffectType::gyver_frequency_5_zones;
+    zones.source = EffectSource::macro_bands;
+    zones.adaptive_fast_response_ms = 40u;
+    zones.adaptive_average_response_ms = 700u;
+    zones.adaptive_trigger_percent = 125u;
+    zones.gyver_frequency_colors = {kGreen, kBlue, kRed};
+    scene[0] = zones;
+
+    EffectEngine engine;
+    if (engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+
+    std::array<RgbwColor, 10> pixels{};
+    std::array<EffectRenderSpan, effects::kEffectStripCount> spans =
+        empty_spans();
+    spans[0] = {pixels.data(), pixels.size()};
+    engine.render(snapshot(audio, spectrum, 33000u), spans);
+    spectrum.raw_low = 6000u;
+    spectrum.raw_mid = 6000u;
+    spectrum.raw_high = 6000u;
+    engine.render(snapshot(audio, spectrum, 66000u), spans);
+    if (pixels[0].red == 0u || pixels[2].blue == 0u ||
+        pixels[4].green == 0u || pixels[8].red == 0u) {
+        return false;
+    }
+
+    zones.reversed = true;
+    if (engine.stage_strip_config(0u, zones) != EffectStatus::ok) {
+        return false;
+    }
+    engine.render(snapshot(audio, spectrum, 99000u), spans);
+    if (pixels[0].red == 0u || pixels[4].green == 0u) {
+        return false;
+    }
+
+    StripEffectConfig full = zones;
+    full.reversed = false;
+    full.type = EffectType::gyver_frequency_full_strip;
+    full.gyver_full_strip_selection = GyverFullStripSelectionPolicy::gyver_priority;
+    if (engine.stage_strip_config(0u, full) != EffectStatus::ok) {
+        return false;
+    }
+    engine.render(snapshot(audio, spectrum, 132000u), spans);
+    spectrum.raw_low = 2000u;
+    spectrum.raw_mid = 2000u;
+    spectrum.raw_high = 12000u;
+    engine.render(snapshot(audio, spectrum, 165000u), spans);
+    if (pixels[0].red == 0u) {
+        return false;
+    }
+
+    full.gyver_full_strip_selection =
+        GyverFullStripSelectionPolicy::strongest_event;
+    spectrum.raw_low = 2000u;
+    spectrum.raw_mid = 2000u;
+    spectrum.raw_high = 2000u;
+    if (engine.stage_strip_config(0u, full) != EffectStatus::ok) {
+        return false;
+    }
+    engine.render(snapshot(audio, spectrum, 198000u), spans);
+    spectrum.raw_low = 12000u;
+    engine.render(snapshot(audio, spectrum, 231000u), spans);
+    if (pixels[0].green == 0u) {
+        return false;
+    }
+
+    StripEffectConfig running = zones;
+    running.type = EffectType::gyver_running_frequencies;
+    running.gyver_animation_interval_ms = 33u;
+    if (engine.stage_strip_config(0u, running) != EffectStatus::ok) {
+        return false;
+    }
+    std::array<RgbwColor, 5> odd{};
+    spans[0] = {odd.data(), odd.size()};
+    engine.render(snapshot(audio, spectrum, 264000u), spans);
+    engine.render(snapshot(audio, spectrum, 297000u), spans);
+    engine.render(snapshot(audio, spectrum, 330000u), spans);
+    if (!colors_equal(odd[1], odd[3]) || is_off(odd[1])) {
+        return false;
+    }
+
+    return true;
+}
+
+bool test_gyver_vu_auto_gain_and_spectrum_geometry() {
+    AudioLevelFrame audio{};
+    audio.left_peak = 512u;
+    audio.right_peak = 0u;
+    SpectrumFrame spectrum{};
+    spectrum.raw_bands.fill(0u);
+    spectrum.raw_bands[0] = 1000u;
+    spectrum.raw_bands[25] = 6000u;
+
+    std::array<StripEffectConfig, effects::kEffectStripCount> scene =
+        off_scene();
+    StripEffectConfig vu{};
+    vu.enabled = true;
+    vu.type = EffectType::gyver_vu_gradient;
+    vu.source = EffectSource::stereo_left_right;
+    vu.auto_gain_enabled = true;
+    vu.palette = {kGreen, kGreen, kGreen, kGreen};
+    scene[0] = vu;
+
+    EffectEngine engine;
+    std::array<RgbwColor, 10> pixels{};
+    std::array<EffectRenderSpan, effects::kEffectStripCount> spans =
+        empty_spans();
+    spans[0] = {pixels.data(), pixels.size()};
+    if (engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+    engine.render(snapshot(audio, spectrum, 33000u), spans);
+    if (is_off(pixels[0]) || is_off(pixels[4]) || !is_off(pixels[5])) {
+        return false;
+    }
+
+    vu.auto_gain_enabled = false;
+    if (engine.stage_strip_config(0u, vu) != EffectStatus::ok) {
+        return false;
+    }
+    engine.render(snapshot(audio, spectrum, 66000u), spans);
+    if (is_off(pixels[4])) {
+        return false;
+    }
+
+    StripEffectConfig analyzer{};
+    analyzer.enabled = true;
+    analyzer.type = EffectType::gyver_spectrum_analyzer;
+    analyzer.source = EffectSource::spectrum_32;
+    analyzer.auto_gain_enabled = false;
+    analyzer.palette = {kGreen, kGreen, kGreen, kRed};
+    if (engine.stage_strip_config(0u, analyzer) != EffectStatus::ok) {
+        return false;
+    }
+    engine.render(snapshot(audio, spectrum, 99000u), spans);
+    return !is_off(pixels[4]) && !is_off(pixels[5]) &&
+           (pixels[0].red != pixels[4].red || pixels[0].green != pixels[4].green);
+}
+
 struct NamedTest {
     const char* name;
     bool (*function)();
@@ -1181,7 +1397,7 @@ struct NamedTest {
 }  // namespace
 
 int main() {
-    constexpr std::array<NamedTest, 16> kTests{{
+    constexpr std::array<NamedTest, 18> kTests{{
         {"default scene and configuration API", test_default_scene_and_configuration_api},
         {"channel one has no runtime dependency", test_channel_one_has_no_runtime_dependency},
         {"validation and atomic scene staging", test_validation_and_atomic_scene_staging},
@@ -1204,6 +1420,9 @@ int main() {
          test_all_effects_handle_short_spans_without_out_of_bounds_writes},
         {"reset default and diagnostic scene data",
          test_reset_default_and_diagnostic_scene_data},
+        {"Alex adaptive frequency catalog", test_gyver_adaptive_catalog},
+        {"Gyver VU auto gain and spectrum geometry",
+         test_gyver_vu_auto_gain_and_spectrum_geometry},
     }};
 
     for (const NamedTest& test : kTests) {

@@ -16,11 +16,13 @@ std::array<StripEffectConfig, kEffectStripCount> reset_default_scene();
 // transport. The application may stage them atomically for physical bring-up
 // and later disable or remove that sequence without changing effect code.
 enum class DiagnosticSceneId : uint8_t {
-    vu_and_ambient,
-    spectrum_and_motion,
+    gyver_vu_and_ambient,
+    gyver_frequency_and_spectrum,
+    extended_generic,
+    extended_ambient_and_frequency,
 };
 
-constexpr std::size_t kDiagnosticSceneCount = 2u;
+constexpr std::size_t kDiagnosticSceneCount = 4u;
 
 std::array<StripEffectConfig, kEffectStripCount> diagnostic_scene(
     DiagnosticSceneId scene);

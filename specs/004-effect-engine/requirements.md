@@ -1,4 +1,4 @@
-# Feature 004 — Independent Per-Strip Effect Engine
+# Feature 004 â€” Independent Per-Strip Effect Engine
 
 ## Goal
 
@@ -20,7 +20,12 @@ coherent, read-only `AudioLevelFrame` and `SpectrumFrame` per LED frame.
 - Support Off, Static Direct RGBW, Static White Boost, Scalar VU, Stereo
   Centre-Out VU, Spectrum Bars, Mirrored Spectrum Zones, Macro Bands, one-band
   frequency, stroboscope, smooth colour cycle, running rainbow, and
-  running-frequency effects.
+  `frequency_comet` effects.
+- Keep that generic catalog distinct from the AlexGyver ColorMusic-compatible
+  catalog: Gyver VU Gradient, Gyver VU Rainbow, Gyver Frequency 5 Zones, Alex
+  Frequency 3 Zones, Gyver Frequency Full Strip, Gyver Stroboscope, Gyver Ambient
+  Static, Gyver Ambient Color Cycle, Gyver Ambient Running Rainbow, Gyver Running
+  Frequencies, and Gyver Spectrum Analyzer.
 - The engine shall validate a strip proposal before staging it; scene updates
   are all-or-nothing and changes become visible only at a render boundary.
   Generation increases monotonically for each accepted applied change.
@@ -40,10 +45,10 @@ coherent, read-only `AudioLevelFrame` and `SpectrumFrame` per LED frame.
   luminous output, and can consume substantially more electrical current.
 - Due frames are skipped when the LED manager is busy. Rendering remains 30 Hz
   maximum and is attempted only in a no-ready-audio iteration.
-- The compiled default scene is six independent value copies of one canonical
-  configuration: Stereo Centre-Out VU, Stereo Left/Right source, Off
-  background, and a level-position Green → Yellow → Orange → Red gradient.
-  Channel 1 has no master role or runtime relationship to Channels 2–6.
+- The compiled reset-default scene is six independent value copies of one
+  canonical configuration: Gyver VU Gradient, Stereo Left/Right source, Off
+  background, and a level-position Green â†’ Yellow â†’ Orange â†’ Red gradient.
+  Channel 1 has no master role or runtime relationship to Channels 2â€“6.
 - VU colour modes are Solid, Level-Position Gradient, and Animated Rainbow.
   Gradient position is normalized from each half's logical centre to its end;
   rainbow phase, speed and spacing remain per-strip.
@@ -61,6 +66,24 @@ coherent, read-only `AudioLevelFrame` and `SpectrumFrame` per LED frame.
 - `reset_default_scene()` is named configuration data containing six canonical
   centre-out VUs. The boot-time physical bring-up instead cycles isolated,
   timed diagnostic scenes through the existing atomic scene-staging API.
+- Gyver VU Gradient and Gyver VU Rainbow are stereo centre-out effects. Their
+  independent Left and Right halves support per-strip adaptive display gain,
+  enabled by default; disabling it preserves the direct input-level response.
+- Gyver Frequency 5 Zones, 3 Zones, Full Strip, and Running Frequencies consume
+  the shared Mono Low/Mid/High macro levels through a per-strip adaptive event
+  detector: fast filtered input, slow average, relative threshold, event
+  flash, and decaying event level. They do not use continuous absolute
+  brightness as their primary visible trigger.
+- Gyver Frequency 5 Zones is `High | Mid | Low | Mid | High`; Gyver Frequency 3
+  Zones is `High | Mid | Low`. Direction reverses those logical layouts. Alex
+  Full Strip supports `gyver_priority` (High, Mid, Low) and `strongest_event`.
+- Gyver Running Frequencies retains a fixed, per-strip half-history and mirrors
+  it from the centre to both ends. Gyver Spectrum Analyzer maps all 32 spectrum
+  bands from low at the centre to high at both ends and has adaptive display
+  gain enabled by default.
+- Alex reactive effects use configurable RGBW background colour and Q8
+  brightness, defaulting to off. Gyver Stroboscope additionally supports
+  frequency, duty cycle, fade and that background.
 
 ## Definition of done
 

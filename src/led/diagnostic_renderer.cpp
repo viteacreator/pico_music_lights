@@ -32,15 +32,25 @@ bool g_enabled = false;
 uint64_t g_last_update_us = 0;
 uint64_t g_diagnostic_scene_started_us = 0;
 effects::DiagnosticSceneId g_active_diagnostic_scene =
-    effects::DiagnosticSceneId::vu_and_ambient;
+    effects::DiagnosticSceneId::gyver_vu_and_ambient;
 bool g_diagnostic_scenes_enabled = true;
 
 const char* scene_name(effects::DiagnosticSceneId scene) {
-    if (scene == effects::DiagnosticSceneId::vu_and_ambient) {
-        return "vu_ambient";
+    switch (scene) {
+    case effects::DiagnosticSceneId::gyver_vu_and_ambient:
+        return "gyver_vu_ambient";
+
+    case effects::DiagnosticSceneId::gyver_frequency_and_spectrum:
+        return "gyver_frequency_spectrum";
+
+    case effects::DiagnosticSceneId::extended_generic:
+        return "extended_generic";
+
+    case effects::DiagnosticSceneId::extended_ambient_and_frequency:
+        return "extended_ambient_frequency";
     }
 
-    return "spectrum_motion";
+    return "unknown";
 }
 
 void stage_due_diagnostic_scene(uint64_t now_us) {

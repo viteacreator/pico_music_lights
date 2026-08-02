@@ -1,4 +1,4 @@
-# Feature 004 — Design
+# Feature 004 â€” Design
 
 `EffectEngine` owns six fixed `StripEffectRuntime` slots. A runtime contains a
 configuration and bounded state. It has a separate pending scene so validation
@@ -56,7 +56,7 @@ temporal values, but their mode transition still invokes the same reset policy.
 
 ## ColorMusic behaviour audit and reusable mapping
 
-The official AlexGyver ColorMusic project page documents modes 1–9 and their
+The official AlexGyver ColorMusic project page documents modes 1â€“9 and their
 submodes; its linked GitHub repository is the firmware source reference. This
 project preserves visible behaviour rather than Arduino/WS2812, IR-remote,
 EEPROM, or AVR implementation details.
@@ -83,8 +83,8 @@ end toward centre as low-to-high. Macro regions use `floor(region_count * pixel
 / pixel_count)`, so all pixels are assigned for non-divisible lengths. Direction
 reverses logical geometry only; Feature 001 physical reversal remains separate.
 
-The canonical default is constructed once then copied by value into all six
-slots: `stereo_center_out_vu`, `stereo_left_right`, Off background, and
+The canonical reset-default scene is constructed once then copied by value into
+all six slots: `gyver_vu_gradient`, `stereo_left_right`, Off background, and
 `level_position_gradient` with Green, Yellow, Orange, Red palette. Each side
 uses its distance from logical centre normalized by half capacity to interpolate
 the palette; the centre is Green and the end is Red. Odd spans assign the
@@ -110,6 +110,53 @@ due scene atomically at a render boundary; an explicit staged configuration or
 reset disables this temporary sequence, so it cannot become a permanent effect
 assignment.
 
+## AlexGyver-compatible catalog
+
+The generic extended catalog remains available and names its old circular
+moving-frequency effect `frequency_comet`. Gyver-compatible names use the
+`gyver_` prefix and are separate `EffectType` values so future web metadata can
+distinguish the two families.
+
+| Gyver-compatible effect | Shared input | Geometry / behaviour |
+| --- | --- | --- |
+| Gyver VU Gradient / Rainbow | Stereo Left/Right | Independent centre-to-end halves, adaptive gain by default |
+| Gyver Frequency 5 / 3 Zones | Mono Low/Mid/High | `H,M,L,M,H` or `H,M,L`, adaptive event flashes |
+| Gyver Frequency Full Strip | Mono Low/Mid/High | High-first or strongest active event selects Low/Mid/High colour |
+| Gyver Running Frequencies | Mono Low/Mid/High | New colour injected at centre, retained half-history moves outward symmetrically |
+| Gyver Spectrum Analyzer | 32 spectrum bands | Lowest band at centre, highest at both ends, mirrored palette progression |
+| Gyver Stroboscope / Ambient variants | None | RGBW static, time cycle or running rainbow; strobe has duty/fade/background |
+
+For each Low/Mid/High group, the adaptive detector runs once per strip frame:
+
+```text
+fast = integer_ramp(fast, input, adaptive_fast_response_ms)
+average = integer_ramp(average, fast, adaptive_average_response_ms)
+threshold = average * adaptive_trigger_percent / 100
+event = fast * visual_gain / 256, if fast > threshold
+event = integer_ramp(event, 0, adaptive_event_decay_ms), otherwise
+```
+
+The first observed value initializes fast and average without generating an
+event. All fields are unsigned 0..65535 except the trigger percentage
+(100..1000). This is a provisional RP2040 parameterization of the requested
+v2.10 behaviour; exact original threshold/timing constants are not claimed.
+
+Alex auto gain retains a per-strip reference for Left, Right and spectrum. A
+new higher level becomes the reference immediately; a falling reference decays
+with the configured slow response. The displayed level is `input/reference`,
+clamped to 0..65535. Disabling auto gain passes the original level through.
+
+Gyver Running Frequencies stores one 150-pixel RGBW logical half per strip, then
+mirrors it at render time. This is 600 bytes per strip or 3,600 bytes for six
+strips. Odd spans share their centre pixel; even spans use two adjacent centre
+pixels. A 1-pixel span is written once, and a zero-length span is rejected
+before rendering.
+
+Temporary diagnostic scenes are data-only atomic scenes. Four timed scenes
+cover Gyver VU/ambient, Gyver frequency/spectrum, generic spectrum/motion and
+the remaining generic ambient/frequency effects. Staging a custom scene or the
+named reset-default scene disables this temporary cycle.
+
 Diagnostics retain Feature 003 fields and add `effect_config_generation`,
 `effect_frames_started`, `effect_frames_completed`, `effect_frames_skipped_busy`,
 `effect_render_us`, `effect_render_max_us`, `effect_frames_failed`, and active
@@ -117,9 +164,8 @@ diagnostic scene. The startup report identifies the diagnostic bring-up scene
 and the retained reset-default scene. Effect render time and memory are measured in the
 Pico firmware/map; host tests validate functional bounds and determinism.
 
-On the current ARM Release build, `StripEffectConfig` is 62 bytes,
-`StripEffectState` is 96 bytes, `StripEffectRuntime` is 160 bytes, and the
-single six-slot engine (active runtimes plus pending scene) is 1,344 bytes of
-static SRAM. Raw spectrum publication adds 72 bytes to `SpectrumFrame`.
-The current Feature 004 Release firmware measures 71,380 bytes of text and
-16,360 bytes of BSS. The final map remains authoritative after future changes.
+The current ARM Release map reports the six-slot `EffectEngine` global as
+5,496 bytes of static SRAM. Its Gyver Running Frequencies half-history accounts
+for 3,600 of those bytes across six strips. The current Feature 004 Release
+firmware measures 83,956 bytes of text and 20,520 bytes of BSS. The final map
+remains authoritative after future changes.
