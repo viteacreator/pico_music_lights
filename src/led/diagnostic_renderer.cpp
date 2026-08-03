@@ -34,6 +34,23 @@ uint64_t g_diagnostic_scene_started_us = 0;
 effects::DiagnosticSceneId g_active_diagnostic_scene =
     effects::DiagnosticSceneId::gyver_vu_and_ambient;
 bool g_diagnostic_scenes_enabled = true;
+uint16_t g_volatile_gyver_left_noise_floor = 32u;
+uint16_t g_volatile_gyver_right_noise_floor = 32u;
+
+bool is_gyver_vu(const effects::StripEffectConfig& config) {
+    return config.type == effects::EffectType::gyver_vu_gradient ||
+           config.type == effects::EffectType::gyver_vu_rainbow;
+}
+
+void apply_volatile_gyver_vu_noise_floors(
+    std::array<effects::StripEffectConfig, effects::kEffectStripCount>& scene) {
+    for (effects::StripEffectConfig& config : scene) {
+        if (is_gyver_vu(config)) {
+            config.gyver_left_noise_floor = g_volatile_gyver_left_noise_floor;
+            config.gyver_right_noise_floor = g_volatile_gyver_right_noise_floor;
+        }
+    }
+}
 
 const char* scene_name(effects::DiagnosticSceneId scene) {
     switch (scene) {
@@ -70,8 +87,10 @@ void stage_due_diagnostic_scene(uint64_t now_us) {
             effects::next_diagnostic_scene(g_active_diagnostic_scene);
     }
 
-    if (g_effect_engine.stage_scene(
-            effects::diagnostic_scene(g_active_diagnostic_scene)) ==
+    std::array<effects::StripEffectConfig, effects::kEffectStripCount> scene =
+        effects::diagnostic_scene(g_active_diagnostic_scene);
+    apply_volatile_gyver_vu_noise_floors(scene);
+    if (g_effect_engine.stage_scene(scene) ==
         effects::EffectStatus::ok) {
         g_diagnostic_scene_started_us = now_us;
     } else {
@@ -249,6 +268,30 @@ effects::EffectStatus diagnostic_renderer_stage_effect_config(
         g_diagnostic_scenes_enabled = false;
     }
     return status;
+}
+
+bool diagnostic_renderer_set_volatile_gyver_vu_noise_floors(
+    uint16_t left_floor,
+    uint16_t right_floor) {
+    g_volatile_gyver_left_noise_floor = left_floor;
+    g_volatile_gyver_right_noise_floor = right_floor;
+
+    std::array<effects::StripEffectConfig, effects::kEffectStripCount> scene{};
+    for (std::size_t index = 0u; index < scene.size(); ++index) {
+        if (!g_effect_engine.read_config(index, scene[index])) {
+            return false;
+        }
+    }
+    apply_volatile_gyver_vu_noise_floors(scene);
+    return g_effect_engine.stage_scene(scene) == effects::EffectStatus::ok;
+}
+
+bool diagnostic_renderer_volatile_gyver_vu_noise_floors(
+    uint16_t& left_floor,
+    uint16_t& right_floor) {
+    left_floor = g_volatile_gyver_left_noise_floor;
+    right_floor = g_volatile_gyver_right_noise_floor;
+    return true;
 }
 
 bool diagnostic_renderer_read_effect_runtime(

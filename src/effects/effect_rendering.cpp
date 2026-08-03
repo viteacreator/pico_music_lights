@@ -13,6 +13,10 @@ namespace {
 constexpr uint16_t kAudioPeakMaximum = 2047u;
 constexpr uint32_t kDefaultRenderIntervalMs = 33u;
 constexpr uint32_t kMaximumElapsedMs = 1000u;
+// A newly opened adaptive VU channel starts from at least this normalized
+// level. Tiny values just above the raw noise floor therefore cannot fill a
+// large part of a strip before normal reference tracking has settled.
+constexpr uint16_t kMinimumGyverAutoGainReference = 8192u;
 
 bool supported_segment_count(uint8_t count) {
     return count == 5u || count == 8u || count == 16u || count == 32u;
@@ -299,9 +303,9 @@ void advance_vu_rainbow_phase(StripEffectState& state,
 
 uint16_t gyver_rainbow_hue(const StripEffectRuntime& runtime,
                            std::size_t distance_from_centre,
-                           std::size_t half_capacity) {
+                           std::size_t maximum_outward_index) {
     const std::size_t denominator = std::max<std::size_t>(1u,
-                                                          half_capacity - 1u);
+                                                          maximum_outward_index);
     const uint16_t offset = static_cast<uint16_t>(
         (static_cast<uint32_t>(distance_from_centre) * kRainbowHuePeriod *
          runtime.config.gyver_rainbow_span_percent /
@@ -703,16 +707,18 @@ void render_stroboscope(StripEffectRuntime& runtime,
     const uint32_t duty_fraction = std::min<uint32_t>(
         65535u,
         static_cast<uint32_t>(runtime.config.strobe_duty_percent) * 65535u / 100u);
-    const uint32_t requested_fade_fraction = std::min<uint32_t>(
-        65535u,
-        (static_cast<uint32_t>(runtime.config.strobe_fade_ms) * 65535u +
-         cycle_ms / 2u) /
-            std::max<uint32_t>(1u, cycle_ms));
-    const uint32_t fade_fraction = std::min<uint32_t>(
-        requested_fade_fraction,
-        duty_fraction / 2u);
     uint16_t gate = 0u;
-    if (runtime.state.strobe_phase < duty_fraction) {
+    if (runtime.config.strobe_envelope_mode == StrobeEnvelopeMode::hard_cut) {
+        gate = runtime.state.strobe_phase < duty_fraction ? 65535u : 0u;
+    } else if (runtime.state.strobe_phase < duty_fraction) {
+        const uint32_t requested_fade_fraction = std::min<uint32_t>(
+            65535u,
+            (static_cast<uint32_t>(runtime.config.strobe_fade_ms) * 65535u +
+             cycle_ms / 2u) /
+                std::max<uint32_t>(1u, cycle_ms));
+        const uint32_t fade_fraction = std::min<uint32_t>(
+            requested_fade_fraction,
+            duty_fraction / 2u);
         if (fade_fraction == 0u ||
             (runtime.state.strobe_phase >= fade_fraction &&
              runtime.state.strobe_phase < duty_fraction - fade_fraction)) {
@@ -861,15 +867,24 @@ uint16_t apply_gyver_auto_gain(StripEffectRuntime& runtime,
     }
 
     uint16_t& reference = runtime.state.auto_gain_references[reference_index];
-    if (update_reference) {
-        reference = smooth_level(reference,
-                                 reference_input,
-                                 runtime.config.auto_gain_reference_rise_ms,
-                                 runtime.config.auto_gain_reference_fall_ms,
-                                 elapsed);
+    bool& reference_valid =
+        runtime.state.auto_gain_reference_valid[reference_index];
+    if (update_reference && reference_input != 0u) {
+        if (!reference_valid) {
+            reference = std::max(kMinimumGyverAutoGainReference,
+                                 reference_input);
+            reference_valid = true;
+        } else {
+            reference = smooth_level(
+                reference,
+                reference_input,
+                runtime.config.auto_gain_reference_rise_ms,
+                runtime.config.auto_gain_reference_fall_ms,
+                elapsed);
+        }
     }
 
-    if (reference == 0u) {
+    if (!reference_valid || reference == 0u) {
         return 0u;
     }
 
@@ -933,14 +948,14 @@ void render_gyver_stereo_vu(StripEffectRuntime& runtime,
         runtime,
         0u,
         left_gained,
-        left_smoothed,
+        left_gained,
         elapsed,
         runtime.state.gyver_left_noise_gate_open);
     const uint16_t right = apply_gyver_auto_gain(
         runtime,
         1u,
         right_gained,
-        right_smoothed,
+        right_gained,
         elapsed,
         runtime.state.gyver_right_noise_gate_open);
     const std::size_t left_capacity = (destination.pixel_count + 1u) / 2u;
@@ -949,6 +964,8 @@ void render_gyver_stereo_vu(StripEffectRuntime& runtime,
     const std::size_t right_lit = lit_count(right_capacity, right);
     const std::size_t left_centre = (destination.pixel_count - 1u) / 2u;
     const std::size_t right_centre = destination.pixel_count / 2u;
+    const std::size_t maximum_outward_index =
+        (destination.pixel_count - 1u) / 2u;
 
     if (rainbow) {
         advance_vu_rainbow_phase(runtime.state,
@@ -960,7 +977,7 @@ void render_gyver_stereo_vu(StripEffectRuntime& runtime,
         const RgbwColor color = rainbow
                                     ? rainbow_color(gyver_rainbow_hue(runtime,
                                                                       distance,
-                                                                      left_capacity))
+                                                                      maximum_outward_index))
                                     : vu_gradient_color(runtime.config,
                                                         distance,
                                                         left_capacity);
@@ -993,7 +1010,7 @@ void render_gyver_stereo_vu(StripEffectRuntime& runtime,
         const RgbwColor color = rainbow
                                     ? rainbow_color(gyver_rainbow_hue(runtime,
                                                                       distance,
-                                                                      right_capacity))
+                                                                      maximum_outward_index))
                                     : vu_gradient_color(runtime.config,
                                                         distance,
                                                         right_capacity);
@@ -1115,8 +1132,13 @@ void render_gyver_running_frequencies(StripEffectRuntime& runtime,
     }
     const auto events = update_gyver_events(runtime, snapshot, elapsed);
     std::size_t chosen = 0u;
-    chosen = events[1u] > events[chosen] ? 1u : chosen;
-    chosen = events[2u] > events[chosen] ? 2u : chosen;
+    if (runtime.config.gyver_running_frequencies_selection ==
+        GyverFullStripSelectionPolicy::gyver_priority) {
+        chosen = events[2u] != 0u ? 2u : (events[1u] != 0u ? 1u : 0u);
+    } else {
+        chosen = events[1u] > events[chosen] ? 1u : chosen;
+        chosen = events[2u] > events[chosen] ? 2u : chosen;
+    }
     runtime.state.gyver_animation_elapsed_ms = static_cast<uint16_t>(
         std::min<uint32_t>(kMaximumElapsedMs,
                            runtime.state.gyver_animation_elapsed_ms + elapsed));
@@ -1172,20 +1194,23 @@ void render_gyver_spectrum(StripEffectRuntime& runtime,
                    : 0u;
         peak = std::max(peak, band);
     }
+    const bool spectrum_gate_open =
+        peak >= runtime.config.gyver_spectrum_minimum_peak;
+    const uint16_t usable_peak = spectrum_gate_open ? peak : 0u;
     const uint16_t gain_reference = apply_gyver_auto_gain(runtime,
                                                           2u,
-                                                          peak,
-                                                          peak,
+                                                          usable_peak,
+                                                          usable_peak,
                                                           elapsed,
-                                                          peak != 0u);
+                                                          spectrum_gate_open);
     std::array<uint16_t, kSpectrumBandCount> smoothed{};
     for (std::size_t band = 0u; band < bands.size(); ++band) {
-        const uint16_t normalized = peak == 0u || gain_reference == 0u
+        const uint16_t normalized = usable_peak == 0u || gain_reference == 0u
                                         ? 0u
                                         : static_cast<uint16_t>(
                                               (static_cast<uint32_t>(bands[band]) *
-                                               gain_reference + peak / 2u) /
-                                              peak);
+                                               gain_reference + usable_peak / 2u) /
+                                              usable_peak);
         smoothed[band] = update_level(runtime, band, normalized, elapsed);
     }
     const std::size_t left_centre = (destination.pixel_count - 1u) / 2u;

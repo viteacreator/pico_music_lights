@@ -101,6 +101,15 @@ coherent, read-only `AudioLevelFrame` and `SpectrumFrame` per LED frame.
   it from the centre to both ends. Gyver Spectrum Analyzer maps all 32 spectrum
   bands from low at the centre to high at both ends and has adaptive display
   gain enabled by default.
+- Gyver Running Frequencies independently selects `gyver_priority` (High,
+  Mid, Low) or `strongest_event`; its default is `gyver_priority`. Gyver
+  Spectrum additionally requires an adjusted peak of at least
+  `gyver_spectrum_minimum_peak` after per-band floor subtraction before it may
+  initialize or update its adaptive reference.
+- Gyver Stroboscope is always `hard_cut`: foreground is immediately on for its
+  configured duty interval and the exact background is immediately restored
+  for the remainder. Generic Stroboscope defaults to the same hard-cut mode
+  and may explicitly select a fade envelope.
 - Gyver reactive effects use configurable RGBW background colour and Q8
   brightness, defaulting to off. Gyver Stroboscope additionally supports
   frequency, duty cycle, fade and that background.

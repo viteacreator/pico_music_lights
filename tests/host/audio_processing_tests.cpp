@@ -1,4 +1,5 @@
 #include "audio/audio_processing.hpp"
+#include "audio/vu_calibration.hpp"
 
 #include <array>
 
@@ -98,13 +99,41 @@ bool test_audio_attack_is_faster_than_release() {
            attack_delta > release_delta;
 }
 
+bool test_vu_calibration_commands_and_floors() {
+    const VuCalibrationCommand default_command =
+        parse_vu_calibration_command("vu_noise_calibrate");
+    const VuCalibrationCommand minimum_command =
+        parse_vu_calibration_command("vu_noise_calibrate 250");
+    const VuCalibrationCommand maximum_command =
+        parse_vu_calibration_command("vu_noise_calibrate 10000");
+    const VuCalibrationCommand invalid_command =
+        parse_vu_calibration_command("vu_noise_calibrate 249 extra");
+    const VuCalibrationCommand cancel_command =
+        parse_vu_calibration_command("vu_noise_calibrate cancel");
+    const VuCalibrationCommand floors_command =
+        parse_vu_calibration_command("vu_noise_floors");
+
+    return default_command.type == VuCalibrationCommandType::start &&
+           default_command.duration_ms == kDefaultVuCalibrationDurationMs &&
+           minimum_command.type == VuCalibrationCommandType::start &&
+           minimum_command.duration_ms == kMinimumVuCalibrationDurationMs &&
+           maximum_command.type == VuCalibrationCommandType::start &&
+           maximum_command.duration_ms == kMaximumVuCalibrationDurationMs &&
+           invalid_command.type == VuCalibrationCommandType::invalid &&
+           cancel_command.type == VuCalibrationCommandType::cancel &&
+           floors_command.type == VuCalibrationCommandType::report_floors &&
+           vu_calibrated_floor(24u) == 32u &&
+           vu_calibrated_floor(2047u) == kVuCalibrationRawMaximum;
+}
+
 }  // namespace
 
 int main() {
     return test_audio_deinterleaving_and_offsets() &&
                    test_audio_peak_rms_mono_and_cancellation() &&
                    test_audio_dc_convergence_envelope_and_clipping() &&
-                   test_audio_attack_is_faster_than_release()
+                   test_audio_attack_is_faster_than_release() &&
+                   test_vu_calibration_commands_and_floors()
                ? 0
                : 1;
 }

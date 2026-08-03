@@ -38,3 +38,6 @@ Physical acceptance is pending.
 11. With quiet inputs run `vu_noise_calibrate 2000`, then use
     `vu_noise_floors`. Confirm floors are raw peak counts, quiet values leave
     Gyver VU bars off, and the bars decay normally after sound stops.
+12. The strobe scene is rapid flashing: use appropriate photosensitivity
+    precautions. Confirm Gyver Stroboscope switches directly between its full
+    foreground and exact RGBW background with no intermediate fade.

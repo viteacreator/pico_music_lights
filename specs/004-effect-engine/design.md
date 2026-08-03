@@ -41,6 +41,12 @@ configuration API. It owns no heap memory and never pauses capture, FFT, or
 LED DMA. Telemetry reports raw/effective peaks, gate state, references, floors,
 hysteresis and calibration state in a separate bounded line.
 
+Calibrated floors are volatile application-owned values. They are atomically
+staged into currently active Gyver VUs and copied into every later diagnostic
+Gyver VU scene; calibration never disables diagnostic-scene rotation. The VU
+line identifies the first active Gyver VU strip, rather than implying that
+strip zero is always a VU.
+
 Per-strip smoothing is a bounded integer first-order ramp. For each output
 level, the target is visual-gain scaled and clamped to 0..65535. The change per
 frame is proportional to elapsed milliseconds divided by configured attack or
@@ -90,14 +96,15 @@ EEPROM, or AVR implementation details.
 | 3 five bands | five symmetric frequency zones | mirrored spectrum zones | 32 bands | smoothing | zones, palette, direction |
 | 4 three bands | three contiguous frequency regions | macro bands (3) | macro bands | smoothing | palette, direction |
 | 5 one band | whole strip follows selected bands | one-band frequency | macro bands | smoothing | three/Low/Mid/High, gain, palette |
-| 6 strobe | timed flashes with fade | stroboscope | none | strobe phase/level | frequency, fade, colour |
+| 6 strobe | timed hard-cut flashes | stroboscope | none | strobe phase | frequency, duty, colour, background |
 | 7 ambient | fixed colour, smooth cycle, running rainbow | Static, colour cycle, running rainbow | none | phase | White Boost, speed, spacing, palette |
 | 8 running frequencies | moving frequency-coloured trail | running-frequency | macro bands | position, level/decay | selection, speed, decay, direction |
 | 9 spectrum | contiguous spectrum analyser | spectrum bars | 32 bands | smoothing | 5/8/16/32 segments, palette, direction |
 
-The strobe is timed and audio-independent, matching its documented controls.
-Feature 004 does not copy the original auto-gain, noise calibration, IR
-handling, EEPROM, or Arduino hardware loop.
+The strobe is timed and audio-independent. Gyver Stroboscope is always
+hard-cut; generic Stroboscope can explicitly choose a fade envelope.
+Feature 004 does not copy the original IR handling, EEPROM, or Arduino
+hardware loop.
 
 Spectrum bars use the existing weighted 32-band resampling into 5, 8, 16 or 32
 segments. Mirrored zones resample to a bounded zone count and map nearest-strip
@@ -126,7 +133,7 @@ geometry to the opposite destination order.
 
 `effect_scenes` is a hardware-independent scene-data module. Its named reset
 scene returns six independent value copies of the canonical centre-out VU. Its
-two 12-second temporary diagnostic scenes cover VU/ambient and
+four 12-second temporary diagnostic scenes cover Gyver and generic VU/ambient,
 spectrum/motion catalog members across the six strips. The LED wrapper stages a
 due scene atomically at a render boundary; an explicit staged configuration or
 reset disables this temporary sequence, so it cannot become a permanent effect
@@ -146,7 +153,7 @@ distinguish the two families.
 | Gyver Frequency Full Strip | Mono Low/Mid/High | High-first or strongest active event selects Low/Mid/High colour |
 | Gyver Running Frequencies | Mono Low/Mid/High | New colour injected at centre, retained half-history moves outward symmetrically |
 | Gyver Spectrum Analyzer | 32 spectrum bands | Lowest band at centre, highest at both ends, mirrored palette progression |
-| Gyver Stroboscope / Ambient variants | None | RGBW static, time cycle or running rainbow; strobe has duty/fade/background |
+| Gyver Stroboscope / Ambient variants | None | RGBW static, time cycle or running rainbow; strobe uses hard-cut duty/background |
 
 For each Low/Mid/High group, the adaptive detector runs once per strip frame:
 
@@ -189,7 +196,7 @@ and the retained reset-default scene. Effect render time and memory are measured
 Pico firmware/map; host tests validate functional bounds and determinism.
 
 The current ARM Release map reports the six-slot `EffectEngine` global as
-5,712 bytes of static SRAM. Its Gyver Running Frequencies half-history accounts
+5,792 bytes of static SRAM. Its Gyver Running Frequencies half-history accounts
 for 3,600 of those bytes across six strips. The current Feature 004 Release
-firmware measures 91,032 bytes of text and 21,124 bytes of BSS. The final map
+firmware measures 91,196 bytes of text and 20,892 bytes of BSS. The final map
 remains authoritative after future changes.

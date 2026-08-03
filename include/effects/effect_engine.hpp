@@ -96,6 +96,11 @@ enum class GenericMacroBandMapping : uint8_t {
     bass_mid_high,
 };
 
+enum class StrobeEnvelopeMode : uint8_t {
+    hard_cut,
+    fade_envelope,
+};
+
 enum class EffectStatus : uint8_t {
     ok,
     invalid_strip_index,
@@ -131,6 +136,8 @@ struct StripEffectConfig {
     FrequencySelection frequency_selection = FrequencySelection::three_frequencies;
     GyverFullStripSelectionPolicy gyver_full_strip_selection =
         GyverFullStripSelectionPolicy::gyver_priority;
+    GyverFullStripSelectionPolicy gyver_running_frequencies_selection =
+        GyverFullStripSelectionPolicy::gyver_priority;
     GenericMacroBandMapping macro_band_mapping =
         GenericMacroBandMapping::low_mid_high;
     // Q8 phase increments per millisecond and Q8 pixel hue spacing.
@@ -140,6 +147,7 @@ struct StripEffectConfig {
     uint8_t strobe_frequency_hz = 8u;
     uint8_t strobe_duty_percent = 50u;
     uint16_t strobe_fade_ms = 40u;
+    StrobeEnvelopeMode strobe_envelope_mode = StrobeEnvelopeMode::hard_cut;
     // Q8 scale applied to background_color; zero keeps the background off.
     uint16_t background_brightness_q8 = 0u;
     // Gyver-compatible adaptive gain and macro-event detector parameters.
@@ -165,6 +173,7 @@ struct StripEffectConfig {
     // Spectrum energy below this threshold is not allowed to update Gyver
     // Spectrum Analyzer's adaptive reference.
     uint16_t gyver_spectrum_noise_floor = 256u;
+    uint16_t gyver_spectrum_minimum_peak = 64u;
     // Frequency Comet uses a percentage of the active span for its tail.
     // A source level at or below this threshold produces no comet head.
     uint8_t frequency_comet_tail_percent = 20u;
@@ -189,6 +198,10 @@ struct StripEffectState {
     std::array<uint16_t, kEffectAdaptiveMacroBandCount> adaptive_event_levels{};
     // Left, Right and spectrum adaptive display references respectively.
     std::array<uint16_t, kEffectAdaptiveMacroBandCount> auto_gain_references{};
+    // A reference becomes valid only after a meaningful ungated source level
+    // primes it. This prevents a newly opened quiet gate from normalizing
+    // against zero or a near-zero reference.
+    std::array<bool, kEffectAdaptiveMacroBandCount> auto_gain_reference_valid{};
     // Only one logical half is retained for mirrored Gyver running frequencies.
     // At 150 RGBW entries this costs 600 bytes per strip rather than 1,200.
     std::array<RgbwColor, kEffectMaximumHalfPixelsPerStrip>

@@ -40,6 +40,10 @@ bool is_valid_macro_band_mapping(GenericMacroBandMapping mapping) {
     return mapping <= GenericMacroBandMapping::bass_mid_high;
 }
 
+bool is_valid_strobe_envelope_mode(StrobeEnvelopeMode mode) {
+    return mode <= StrobeEnvelopeMode::fade_envelope;
+}
+
 bool is_gyver_adaptive_frequency_effect(EffectType type) {
     switch (type) {
     case EffectType::gyver_frequency_5_zones:
@@ -117,7 +121,9 @@ bool requires_state_reset(const StripEffectConfig& active,
     }
 
     if (active.type == EffectType::gyver_spectrum_analyzer &&
-        active.gyver_spectrum_noise_floor != proposed.gyver_spectrum_noise_floor) {
+        (active.gyver_spectrum_noise_floor != proposed.gyver_spectrum_noise_floor ||
+         active.gyver_spectrum_minimum_peak !=
+             proposed.gyver_spectrum_minimum_peak)) {
         return true;
     }
 
@@ -134,12 +140,19 @@ bool requires_state_reset(const StripEffectConfig& active,
          active.type == EffectType::gyver_stroboscope) &&
         (active.strobe_frequency_hz != proposed.strobe_frequency_hz ||
          active.strobe_duty_percent != proposed.strobe_duty_percent ||
-         active.strobe_fade_ms != proposed.strobe_fade_ms)) {
+         active.strobe_fade_ms != proposed.strobe_fade_ms ||
+         active.strobe_envelope_mode != proposed.strobe_envelope_mode)) {
         return true;
     }
 
     if (active.type == EffectType::gyver_frequency_full_strip &&
         active.gyver_full_strip_selection != proposed.gyver_full_strip_selection) {
+        return true;
+    }
+
+    if (active.type == EffectType::gyver_running_frequencies &&
+        active.gyver_running_frequencies_selection !=
+            proposed.gyver_running_frequencies_selection) {
         return true;
     }
 
@@ -246,7 +259,10 @@ EffectStatus EffectEngine::validate_config(const StripEffectConfig& config) cons
     if (!is_valid_vu_color_mode(config.vu_color_mode) ||
         !is_valid_frequency_selection(config.frequency_selection) ||
         !is_valid_gyver_full_strip_selection(config.gyver_full_strip_selection) ||
-        !is_valid_macro_band_mapping(config.macro_band_mapping)) {
+        !is_valid_gyver_full_strip_selection(
+            config.gyver_running_frequencies_selection) ||
+        !is_valid_macro_band_mapping(config.macro_band_mapping) ||
+        !is_valid_strobe_envelope_mode(config.strobe_envelope_mode)) {
         return EffectStatus::invalid_parameter;
     }
 
@@ -282,6 +298,11 @@ EffectStatus EffectEngine::validate_config(const StripEffectConfig& config) cons
          config.type == EffectType::gyver_stroboscope) &&
         (config.strobe_frequency_hz == 0u ||
          config.strobe_frequency_hz > kMaximumStrobeFrequencyHz)) {
+        return EffectStatus::invalid_parameter;
+    }
+
+    if (config.type == EffectType::gyver_stroboscope &&
+        config.strobe_envelope_mode != StrobeEnvelopeMode::hard_cut) {
         return EffectStatus::invalid_parameter;
     }
 

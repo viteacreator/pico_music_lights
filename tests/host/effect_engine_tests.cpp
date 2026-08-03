@@ -67,6 +67,8 @@ bool configurations_equal(const StripEffectConfig& first,
            first.vu_color_mode == second.vu_color_mode &&
            first.frequency_selection == second.frequency_selection &&
            first.gyver_full_strip_selection == second.gyver_full_strip_selection &&
+           first.gyver_running_frequencies_selection ==
+               second.gyver_running_frequencies_selection &&
            first.macro_band_mapping == second.macro_band_mapping &&
            gyver_colors_equal &&
            first.animation_speed_q8 == second.animation_speed_q8 &&
@@ -75,6 +77,7 @@ bool configurations_equal(const StripEffectConfig& first,
            first.strobe_frequency_hz == second.strobe_frequency_hz &&
            first.strobe_duty_percent == second.strobe_duty_percent &&
            first.strobe_fade_ms == second.strobe_fade_ms &&
+           first.strobe_envelope_mode == second.strobe_envelope_mode &&
            first.background_brightness_q8 == second.background_brightness_q8 &&
            first.auto_gain_enabled == second.auto_gain_enabled &&
            first.auto_gain_headroom_q8 == second.auto_gain_headroom_q8 &&
@@ -90,6 +93,8 @@ bool configurations_equal(const StripEffectConfig& first,
            first.auto_gain_reference_rise_ms == second.auto_gain_reference_rise_ms &&
            first.auto_gain_reference_fall_ms == second.auto_gain_reference_fall_ms &&
            first.gyver_spectrum_noise_floor == second.gyver_spectrum_noise_floor &&
+           first.gyver_spectrum_minimum_peak ==
+               second.gyver_spectrum_minimum_peak &&
            first.frequency_comet_tail_percent == second.frequency_comet_tail_percent &&
            first.frequency_comet_quiet_threshold == second.frequency_comet_quiet_threshold &&
            first.reversed == second.reversed &&
@@ -1373,7 +1378,9 @@ bool test_gyver_vu_auto_gain_and_spectrum_geometry() {
         return false;
     }
     engine.render(snapshot(audio, spectrum, 33000u), spans);
-    if (is_off(pixels[0]) || is_off(pixels[4]) || !is_off(pixels[5])) {
+    // A first non-noise sample primes auto gain; it must light the centre but
+    // must not be amplified to the complete left half.
+    if (is_off(pixels[4]) || !is_off(pixels[0]) || !is_off(pixels[5])) {
         return false;
     }
 

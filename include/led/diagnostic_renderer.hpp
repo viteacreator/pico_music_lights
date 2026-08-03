@@ -52,6 +52,12 @@ bool diagnostic_renderer_read_effect_config(
 effects::EffectStatus diagnostic_renderer_stage_effect_config(
     std::size_t strip_index,
     const effects::StripEffectConfig& config);
+bool diagnostic_renderer_set_volatile_gyver_vu_noise_floors(
+    uint16_t left_floor,
+    uint16_t right_floor);
+bool diagnostic_renderer_volatile_gyver_vu_noise_floors(
+    uint16_t& left_floor,
+    uint16_t& right_floor);
 bool diagnostic_renderer_read_effect_runtime(
     std::size_t strip_index,
     DiagnosticEffectRuntimeSnapshot& output);

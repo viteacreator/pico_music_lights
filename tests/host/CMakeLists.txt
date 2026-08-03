@@ -6,14 +6,19 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 enable_testing()
+option(PICO_MUSIC_LIGHTS_HOST_SANITIZERS "Enable ASan and UBSan for host tests" ON)
 
 function(configure_host_test target)
     target_include_directories(${target} PRIVATE ../../include ../../src)
 
     if(MSVC)
-        target_compile_options(${target} PRIVATE /W4)
+        target_compile_options(${target} PRIVATE /W4 /WX)
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
+        if(PICO_MUSIC_LIGHTS_HOST_SANITIZERS)
+            target_compile_options(${target} PRIVATE -fsanitize=address,undefined)
+            target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+        endif()
     endif()
 
     add_test(NAME ${target} COMMAND ${target})
