@@ -1,4 +1,5 @@
 #include "audio/audio_processing.hpp"
+#include "audio/idle_commands.hpp"
 #include "audio/vu_calibration.hpp"
 
 #include <array>
@@ -126,6 +127,17 @@ bool test_vu_calibration_commands_and_floors() {
            vu_calibrated_floor(2047u) == kVuCalibrationRawMaximum;
 }
 
+bool test_idle_command_parser() {
+    return parse_idle_command("idle_enable") == IdleCommandType::enable &&
+           parse_idle_command("idle_disable") == IdleCommandType::disable &&
+           parse_idle_command("idle_status") == IdleCommandType::status &&
+           parse_idle_command("idle_test") == IdleCommandType::test &&
+           parse_idle_command("idle") == IdleCommandType::invalid &&
+           parse_idle_command("idle_enable extra") == IdleCommandType::invalid &&
+           parse_idle_command("") == IdleCommandType::invalid &&
+           parse_idle_command(nullptr) == IdleCommandType::invalid;
+}
+
 }  // namespace
 
 int main() {
@@ -133,7 +145,8 @@ int main() {
                    test_audio_peak_rms_mono_and_cancellation() &&
                    test_audio_dc_convergence_envelope_and_clipping() &&
                    test_audio_attack_is_faster_than_release() &&
-                   test_vu_calibration_commands_and_floors()
+                   test_vu_calibration_commands_and_floors() &&
+                   test_idle_command_parser()
                ? 0
                : 1;
 }

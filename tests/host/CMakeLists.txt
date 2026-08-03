@@ -57,6 +57,7 @@ configure_host_test(diagnostic_renderer_tests)
 add_executable(effect_engine_tests
     effect_engine_tests.cpp
     ../../src/effects/effect_engine.cpp
+    ../../src/effects/idle_lighting.cpp
     ../../src/effects/effect_rendering.cpp
     ../../src/effects/effect_scenes.cpp
 )

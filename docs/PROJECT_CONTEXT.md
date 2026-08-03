@@ -248,6 +248,17 @@ Each logical pixel requires at least four bytes of pixel-buffer memory:
 - one byte for Blue;
 - one byte for White.
 
+## Global Idle Lighting
+
+Feature 004 provides a global, optional Idle Lighting overlay. It is separate
+from all six per-strip effect configurations: effects continue rendering while
+the overlay blends their RGBW pixels toward a configurable idle colour. Audio
+activity is detected directly from raw Left, Right and Aux peaks using global
+input selection, floors, hysteresis, confirmation and silence timing. The
+default idle colour uses the dedicated SK6812 White channel. Idle configuration
+is staged and applied at a renderer frame boundary, ready for a future web UI;
+it is not persistent in this feature.
+
 ## Development approach
 
 The project uses Spec-Driven Development.

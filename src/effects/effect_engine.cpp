@@ -161,7 +161,8 @@ bool requires_state_reset(const StripEffectConfig& active,
 }
 
 bool is_scalar_source(EffectSource source) {
-    return source >= EffectSource::left && source <= EffectSource::high;
+    return source == EffectSource::left || source == EffectSource::right ||
+           source == EffectSource::aux || source == EffectSource::mono;
 }
 
 bool is_supported_segment_count(uint8_t count) {

@@ -3,6 +3,7 @@
 #include "audio/audio_processing.hpp"
 #include "audio/spectrum_analyzer.hpp"
 #include "effects/effect_engine.hpp"
+#include "effects/idle_lighting.hpp"
 #include "led/led_status.hpp"
 
 #include <array>
@@ -29,6 +30,8 @@ struct DiagnosticEffectRuntimeSnapshot {
     effects::StripEffectConfig config{};
     uint16_t left_reference = 0u;
     uint16_t right_reference = 0u;
+    uint16_t left_smoothed = 0u;
+    uint16_t right_smoothed = 0u;
     bool left_gate_open = false;
     bool right_gate_open = false;
 };
@@ -65,4 +68,10 @@ effects::EffectStatus diagnostic_renderer_stage_effect_scene(
     const std::array<effects::StripEffectConfig, effects::kEffectStripCount>& scene);
 bool diagnostic_renderer_restore_default_effect_scene();
 uint32_t diagnostic_renderer_configuration_generation();
+bool diagnostic_renderer_read_idle_config(effects::IdleLightingConfig& output);
+effects::IdleLightingStatus diagnostic_renderer_stage_idle_config(
+    const effects::IdleLightingConfig& config);
+bool diagnostic_renderer_has_pending_idle_config();
+bool diagnostic_renderer_apply_pending_idle_config();
+const effects::IdleLightingRuntime& diagnostic_renderer_idle_runtime();
 const char* diagnostic_renderer_active_scene_name();

@@ -29,9 +29,15 @@ StripEffectConfig make_canonical_stereo_vu() {
 StripEffectConfig make_ambient_cycle() {
     StripEffectConfig config{};
     config.enabled = true;
-    config.type = EffectType::gyver_ambient_color_cycle;
+    config.type = EffectType::ambient_color_cycle;
     config.source = EffectSource::none;
     config.animation_speed_q8 = 96u;
+    return config;
+}
+
+StripEffectConfig make_gyver_ambient_cycle() {
+    StripEffectConfig config = make_ambient_cycle();
+    config.type = EffectType::gyver_ambient_color_cycle;
     return config;
 }
 
@@ -61,7 +67,6 @@ std::array<StripEffectConfig, kEffectStripCount> diagnostic_scene(
         rainbow_vu.type = EffectType::gyver_vu_rainbow;
         rainbow_vu.vu_color_mode = VuColorMode::animated_rainbow;
         rainbow_vu.animation_speed_q8 = 128u;
-        rainbow_vu.color_spacing_q8 = 192u;
         scene[1] = rainbow_vu;
 
         StripEffectConfig static_white{};
@@ -78,10 +83,10 @@ std::array<StripEffectConfig, kEffectStripCount> diagnostic_scene(
         strobe.source = EffectSource::none;
         strobe.primary_color = {255, 255, 255, 0};
         strobe.strobe_frequency_hz = 8u;
-        strobe.strobe_fade_ms = 40u;
+        strobe.strobe_fade_ms = 0u;
         scene[3] = strobe;
 
-        scene[4] = make_ambient_cycle();
+        scene[4] = make_gyver_ambient_cycle();
 
         StripEffectConfig rainbow{};
         rainbow.enabled = true;

@@ -948,14 +948,14 @@ void render_gyver_stereo_vu(StripEffectRuntime& runtime,
         runtime,
         0u,
         left_gained,
-        left_gained,
+        left_smoothed,
         elapsed,
         runtime.state.gyver_left_noise_gate_open);
     const uint16_t right = apply_gyver_auto_gain(
         runtime,
         1u,
         right_gained,
-        right_gained,
+        right_smoothed,
         elapsed,
         runtime.state.gyver_right_noise_gate_open);
     const std::size_t left_capacity = (destination.pixel_count + 1u) / 2u;
@@ -989,17 +989,6 @@ void render_gyver_stereo_vu(StripEffectRuntime& runtime,
 
     const bool odd_length = (destination.pixel_count % 2u) != 0u;
     const std::size_t right_first_distance = odd_length ? 1u : 0u;
-    if (odd_length && (left_lit != 0u || right_lit != 0u)) {
-        const RgbwColor centre_color = rainbow
-                                           ? rainbow_color(runtime.state.animation_phase)
-                                           : vu_gradient_color(runtime.config,
-                                                               0u,
-                                                               left_capacity);
-        write_pixel(destination,
-                    runtime.config.reversed,
-                    left_centre,
-                    centre_color);
-    }
 
     for (std::size_t distance = right_first_distance;
          distance < right_lit + right_first_distance;

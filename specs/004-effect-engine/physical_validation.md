@@ -2,6 +2,16 @@
 
 Physical acceptance is pending.
 
+Idle Lighting checklist: boot with Idle disabled; run `idle_test`; verify the
+initial RGBW White idle output; test Left-only, Right-only and Aux-only activity;
+verify the 150 ms confirmation, a pause below 10 seconds, then a pause above
+10 seconds and both configured fades. Disable a strip-mask bit and verify that
+strip remains on its effect. Confirm effects continue behind the overlay. Run
+`vu_noise_calibrate 2000`, rotate scenes, restore default and check calibrated
+floors remain active. Finally verify Linear VU Left/Right/Aux/Mono in both
+directions, Gyver hard-cut strobe, Comet tail direction, then the existing
+60-second quiet and music continuity checks.
+
 1. Flash the Feature 004 UF2 to Pico W with all six SK6812 RGBW strips wired
    as the established GP2-GP7 GRBW configuration.
 2. Confirm the startup report identifies the temporary diagnostic scene and a

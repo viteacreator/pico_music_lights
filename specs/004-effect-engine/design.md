@@ -126,6 +126,24 @@ phase/level, Q8 running position, running level, smoothing levels and last
 render timestamp. There is no shared mutable effect state. Incompatible
 effect/source/geometry/mode/enable transitions reset only their affected strip.
 
+## Linear VU and global Idle Lighting
+
+`scalar_vu` is the stable internal `linear_vu` effect: one selected Left,
+Right, Aux or Mono source grows from one logical end. `reversed` selects the
+other end. It supports solid, position-gradient and per-pixel rainbow colour
+modes plus RGBW background/palette, Q8 gain, attack/release and animation
+parameters. It remains separate from stereo centre-out effects. For odd stereo
+VU spans, Left owns the centre pixel and Right starts at the next pixel.
+
+`IdleLightingController` owns one staged global configuration and bounded
+runtime. At a renderer frame boundary the engine renders every configured
+strip, the controller updates from raw Left/Right/Aux peaks, then blends only
+mask-selected strips using `interpolate(idle_rgbw_at_q8_brightness, effect,
+effect_mix)`. `effect_mix=0` is full idle and `65535` is full effect. This
+does not pause effect state. Independent selected-input gates use raw ADC
+floors/hysteresis, then confirmation and silence timers. Defaults are disabled,
+but an enabled controller starts idle when `startup_idle_enabled` is true.
+
 `color_spacing_q8` is a Q8 hue increment per logical pixel. Running Rainbow
 uses `hue(pixel) = phase + round(pixel * color_spacing_q8 / 256)` with hue
 wrap; it never normalizes a cycle to span length. Reversal maps this logical

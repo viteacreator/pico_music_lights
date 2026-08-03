@@ -1,9 +1,11 @@
 #include "effects/effect_engine.hpp"
 #include "effects/effect_scenes.hpp"
+#include "effects/idle_lighting.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
 
 namespace {
 
@@ -1332,18 +1334,72 @@ bool test_gyver_adaptive_catalog() {
         return false;
     }
 
+    // A newly activated Running Frequencies effect resets its adaptive state.
+    // Establish a quiet baseline before applying a new transient, rather than
+    // expecting a constant first input to produce an event.
     StripEffectConfig running = zones;
     running.type = EffectType::gyver_running_frequencies;
     running.gyver_animation_interval_ms = 33u;
-    if (engine.stage_strip_config(0u, running) != EffectStatus::ok) {
+    running.gyver_running_frequencies_selection =
+        GyverFullStripSelectionPolicy::gyver_priority;
+    EffectEngine running_engine;
+    std::array<StripEffectConfig, effects::kEffectStripCount> running_scene =
+        off_scene();
+    running_scene[0] = running;
+    if (running_engine.stage_scene(running_scene) != EffectStatus::ok) {
         return false;
     }
+
     std::array<RgbwColor, 5> odd{};
+    spans = empty_spans();
     spans[0] = {odd.data(), odd.size()};
-    engine.render(snapshot(audio, spectrum, 264000u), spans);
-    engine.render(snapshot(audio, spectrum, 297000u), spans);
-    engine.render(snapshot(audio, spectrum, 330000u), spans);
-    if (!colors_equal(odd[1], odd[3]) || is_off(odd[1])) {
+    spectrum.raw_low = 1000u;
+    spectrum.raw_mid = 1000u;
+    spectrum.raw_high = 1000u;
+    uint64_t timestamp_us = 264000u;
+    for (std::size_t frame = 0u; frame < 24u; ++frame) {
+        running_engine.render(snapshot(audio, spectrum, timestamp_us), spans);
+        timestamp_us += 33000u;
+    }
+
+    // Both Low and High exceed the established baseline. Gyver priority must
+    // select High (the configured red colour) despite Low being numerically
+    // stronger.
+    spectrum.raw_low = 12000u;
+    spectrum.raw_high = 9000u;
+    running_engine.render(snapshot(audio, spectrum, timestamp_us), spans);
+    if (!colors_equal(odd[2], kRed)) {
+        return false;
+    }
+    timestamp_us += 33000u;
+    running_engine.render(snapshot(audio, spectrum, timestamp_us), spans);
+    const effects::StripEffectRuntime* priority_runtime =
+        running_engine.runtime(0u);
+    if (priority_runtime == nullptr ||
+        !colors_equal(priority_runtime->state.gyver_running_frequency_history[1u],
+                      kRed)) {
+        return false;
+    }
+
+    // Strongest-event policy must use the numerically larger Low event after
+    // its own reset and fresh baseline.
+    running.gyver_running_frequencies_selection =
+        GyverFullStripSelectionPolicy::strongest_event;
+    if (running_engine.stage_strip_config(0u, running) != EffectStatus::ok) {
+        return false;
+    }
+    spectrum.raw_low = 1000u;
+    spectrum.raw_mid = 1000u;
+    spectrum.raw_high = 1000u;
+    timestamp_us += 33000u;
+    for (std::size_t frame = 0u; frame < 24u; ++frame) {
+        running_engine.render(snapshot(audio, spectrum, timestamp_us), spans);
+        timestamp_us += 33000u;
+    }
+    spectrum.raw_low = 12000u;
+    spectrum.raw_high = 9000u;
+    running_engine.render(snapshot(audio, spectrum, timestamp_us), spans);
+    if (!colors_equal(odd[2], kGreen)) {
         return false;
     }
 
@@ -1403,8 +1459,41 @@ bool test_gyver_vu_auto_gain_and_spectrum_geometry() {
         return false;
     }
     engine.render(snapshot(audio, spectrum, 99000u), spans);
-    return !is_off(pixels[4]) && !is_off(pixels[5]) &&
-           (pixels[0].red != pixels[4].red || pixels[0].green != pixels[4].green);
+    if (is_off(pixels[4]) || is_off(pixels[5]) ||
+        (pixels[0].red == pixels[4].red &&
+         pixels[0].green == pixels[4].green)) {
+        return false;
+    }
+
+    // On odd spans the centre belongs only to Left. Right begins at the
+    // first pixel strictly right of the centre.
+    EffectEngine odd_engine;
+    vu.auto_gain_enabled = false;
+    vu.attack_ms = 0u;
+    vu.release_ms = 0u;
+    scene = off_scene();
+    scene[0] = vu;
+    if (odd_engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+
+    std::array<RgbwColor, 5u> odd_pixels{};
+    spans = empty_spans();
+    spans[0] = {odd_pixels.data(), odd_pixels.size()};
+    audio.left_peak = 0u;
+    audio.right_peak = 2047u;
+    odd_engine.render(snapshot(audio, spectrum, 132000u), spans);
+    if (!is_off(odd_pixels[2]) || is_off(odd_pixels[3]) ||
+        is_off(odd_pixels[4])) {
+        return false;
+    }
+
+    audio.left_peak = 2047u;
+    audio.right_peak = 0u;
+    odd_engine.render(snapshot(audio, spectrum, 165000u), spans);
+    return !is_off(odd_pixels[0]) && !is_off(odd_pixels[1]) &&
+           !is_off(odd_pixels[2]) && is_off(odd_pixels[3]) &&
+           is_off(odd_pixels[4]);
 }
 
 bool test_gyver_vu_raw_noise_gate_and_release() {
@@ -1419,7 +1508,7 @@ bool test_gyver_vu_raw_noise_gate_and_release() {
     config.gyver_left_noise_floor = 32u;
     config.gyver_right_noise_floor = 32u;
     config.gyver_noise_gate_hysteresis = 4u;
-    config.auto_gain_enabled = false;
+    config.auto_gain_enabled = true;
     config.attack_ms = 0u;
     config.release_ms = 200u;
     scene[0] = config;
@@ -1432,6 +1521,15 @@ bool test_gyver_vu_raw_noise_gate_and_release() {
     std::array<RgbwColor, 10u> pixels{};
     auto spans = empty_spans();
     spans[0] = {pixels.data(), pixels.size()};
+    const auto lit_pixel_count = [](const auto& values) {
+        std::size_t count = 0u;
+        for (const RgbwColor color : values) {
+            if (!is_off(color)) {
+                ++count;
+            }
+        }
+        return count;
+    };
 
     // Below and equal raw floor must not create an unsigned-underflow pulse.
     audio.left_peak = 18u;
@@ -1442,29 +1540,112 @@ bool test_gyver_vu_raw_noise_gate_and_release() {
             return false;
         }
     }
-
-    // A real signal opens the gate and becomes visible.
-    audio.left_peak = 512u;
-    engine.render(snapshot(audio, spectrum, 66000u), spans);
-    bool lit = false;
-    for (const RgbwColor color : pixels) {
-        lit = lit || !is_off(color);
-    }
-    if (!lit) {
+    const effects::StripEffectRuntime* runtime = engine.runtime(0u);
+    if (runtime == nullptr || runtime->state.gyver_left_noise_gate_open ||
+        runtime->state.auto_gain_reference_valid[0u]) {
         return false;
     }
 
-    // Still-open hysteresis range below floor targets zero and releases rather
-    // than wrapping into a full-scale bar.
+    // A real signal opens the gate, establishes a reference, and grows only
+    // from Left's centre-out half.
+    audio.left_peak = 512u;
+    engine.render(snapshot(audio, spectrum, 66000u), spans);
+    const std::size_t opened_count = lit_pixel_count(pixels);
+    runtime = engine.runtime(0u);
+    if (opened_count == 0u || !is_off(pixels[5]) || runtime == nullptr ||
+        !runtime->state.gyver_left_noise_gate_open ||
+        !runtime->state.auto_gain_reference_valid[0u]) {
+        return false;
+    }
+    const uint16_t reference_before_hysteresis =
+        runtime->state.auto_gain_references[0u];
+
+    // The still-open hysteresis range targets zero but preserves ordinary
+    // visible release. The open gate may follow its slow reference-fall path.
     audio.left_peak = 30u;
     engine.render(snapshot(audio, spectrum, 99000u), spans);
-    for (const RgbwColor color : pixels) {
-        if (color.red == 255u || color.green == 255u || color.blue == 255u ||
-            color.white == 255u) {
-            return false;
-        }
+    const std::size_t first_release_count = lit_pixel_count(pixels);
+    runtime = engine.runtime(0u);
+    if (runtime == nullptr || !runtime->state.gyver_left_noise_gate_open ||
+        runtime->state.auto_gain_references[0u] > reference_before_hysteresis ||
+        first_release_count > opened_count || !is_off(pixels[5])) {
+        return false;
     }
-    return true;
+
+    // Below the close threshold the gate closes, while the already visible
+    // bar continues to release and eventually reaches complete extinction.
+    audio.left_peak = 18u;
+    engine.render(snapshot(audio, spectrum, 132000u), spans);
+    const std::size_t closed_release_count = lit_pixel_count(pixels);
+    runtime = engine.runtime(0u);
+    const uint16_t reference_at_closure =
+        runtime == nullptr ? 0u : runtime->state.auto_gain_references[0u];
+    if (runtime == nullptr || runtime->state.gyver_left_noise_gate_open ||
+        closed_release_count > first_release_count) {
+        return false;
+    }
+
+    uint64_t timestamp_us = 165000u;
+    for (std::size_t frame = 0u; frame < 40u; ++frame) {
+        engine.render(snapshot(audio, spectrum, timestamp_us), spans);
+        timestamp_us += 33000u;
+    }
+    runtime = engine.runtime(0u);
+    return runtime != nullptr && !runtime->state.gyver_left_noise_gate_open &&
+           runtime->state.auto_gain_references[0u] == reference_at_closure &&
+           lit_pixel_count(pixels) == 0u;
+}
+
+bool test_idle_lighting_configuration_activity_and_blending() {
+    effects::IdleLightingController controller;
+    effects::IdleLightingConfig config{};
+    config.enabled = true;
+    config.startup_idle_enabled = true;
+    config.silence_timeout_ms = 10u;
+    config.audio_confirmation_ms = 0u;
+    config.fade_to_effect_ms = 0u;
+    config.fade_to_idle_ms = 0u;
+    config.idle_color_rgbw = {0u, 0u, 0u, 255u};
+    if (controller.stage_config(config) != effects::IdleLightingStatus::ok ||
+        !controller.apply_pending_config()) {
+        return false;
+    }
+
+    AudioLevelFrame audio{};
+    controller.update(audio, 0u);
+    std::array<RgbwColor, 2> pixels{{kRed, kRed}};
+    std::array<EffectRenderSpan, effects::kEffectStripCount> spans{};
+    spans[0] = {pixels.data(), pixels.size()};
+    controller.blend(spans);
+    if (!colors_equal(pixels[0], {0u, 0u, 0u, 255u}) ||
+        controller.runtime().state != effects::IdleLightingState::idle) {
+        return false;
+    }
+
+    audio.left_peak = 200u;
+    controller.update(audio, 1000u);
+    pixels = {kRed, kRed};
+    controller.blend(spans);
+    if (!colors_equal(pixels[0], kRed) ||
+        controller.runtime().state != effects::IdleLightingState::effects) {
+        return false;
+    }
+
+    config.strip_enable_mask = 0u;
+    if (controller.stage_config(config) != effects::IdleLightingStatus::ok ||
+        !controller.apply_pending_config()) {
+        return false;
+    }
+    controller.update(audio, 2000u);
+    pixels = {kGreen, kGreen};
+    controller.blend(spans);
+    return colors_equal(pixels[0], kGreen) &&
+           std::strcmp(effects::effect_identifier(EffectType::scalar_vu),
+                       "linear_vu") == 0 &&
+           std::strcmp(effects::effect_display_name(EffectType::scalar_vu),
+                       "Linear VU") == 0 &&
+           effects::effect_supports_source(EffectType::scalar_vu,
+                                           EffectSource::aux);
 }
 
 struct NamedTest {
@@ -1475,7 +1656,7 @@ struct NamedTest {
 }  // namespace
 
 int main() {
-    constexpr std::array<NamedTest, 19> kTests{{
+    constexpr std::array<NamedTest, 20> kTests{{
         {"default scene and configuration API", test_default_scene_and_configuration_api},
         {"channel one has no runtime dependency", test_channel_one_has_no_runtime_dependency},
         {"validation and atomic scene staging", test_validation_and_atomic_scene_staging},
@@ -1503,6 +1684,8 @@ int main() {
          test_gyver_vu_auto_gain_and_spectrum_geometry},
         {"Gyver VU raw noise gate and release",
          test_gyver_vu_raw_noise_gate_and_release},
+        {"Idle Lighting configuration, activity, and blending",
+         test_idle_lighting_configuration_activity_and_blending},
     }};
 
     for (const NamedTest& test : kTests) {

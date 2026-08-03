@@ -110,6 +110,24 @@ coherent, read-only `AudioLevelFrame` and `SpectrumFrame` per LED frame.
   configured duty interval and the exact background is immediately restored
   for the remainder. Generic Stroboscope defaults to the same hard-cut mode
   and may explicitly select a fade envelope.
+- `scalar_vu` has the stable public identity `linear_vu` and display name
+  `Linear VU`. It accepts only Left, Right, Aux or Mono and retains independent
+  direction, solid/gradient/rainbow, RGBW palette/background, Q8 gain,
+  attack/release, animation speed and rainbow-spacing configuration. It is
+  distinct from Stereo Centre-Out VU.
+- Global Idle Lighting is a separate, fixed-size staged controller. It blends
+  after effects render and before LED transport; all effects continue updating
+  beneath it. Its defaults are disabled, startup-idle enabled, 10,000 ms
+  silence, 150 ms confirmation, dedicated White `{0,0,0,255}`, Q8 brightness
+  256, 750 ms fade to effects, 1500 ms fade to idle, all inputs and all strips.
+  Raw Left/Right/Aux peaks use independent floor gates and OR selection.
+- `idle_brightness_q8` is exactly `0..256`: 0 is off and 256 is 100 percent
+  of `idle_color_rgbw`. Values above 256 are invalid. Non-disruptive Idle
+  changes (colour, brightness, thresholds, timings and masks) preserve the
+  current transition mix; enabling/disabling resets controller semantics.
+- Temporary non-blocking USB bring-up commands are `idle_enable`,
+  `idle_disable`, `idle_status`, and `idle_test`. They stage the global Idle
+  configuration at the next renderer frame boundary; no persistence is added.
 - Gyver reactive effects use configurable RGBW background colour and Q8
   brightness, defaulting to off. Gyver Stroboscope additionally supports
   frequency, duty cycle, fade and that background.

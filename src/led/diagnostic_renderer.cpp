@@ -26,6 +26,7 @@ static_assert(board::kMaxConfiguredPixels == 800, "Unexpected LED pool size");
 
 LedOutputManager g_manager;
 effects::EffectEngine g_effect_engine;
+effects::IdleLightingController g_idle_lighting;
 DiagnosticRendererStats g_stats;
 bool g_initialized = false;
 bool g_enabled = false;
@@ -224,6 +225,9 @@ void diagnostic_renderer_update(const AudioLevelFrame& audio,
         render_start_us,
     };
     g_effect_engine.render(snapshot, spans);
+    (void)g_idle_lighting.apply_pending_config();
+    g_idle_lighting.update(audio, render_start_us);
+    g_idle_lighting.blend(spans);
     g_stats.effect_render_us = static_cast<uint32_t>(
         time_us_64() - render_start_us);
     g_stats.effect_render_max_us = std::max(
@@ -306,6 +310,8 @@ bool diagnostic_renderer_read_effect_runtime(
     output.config = runtime->config;
     output.left_reference = runtime->state.auto_gain_references[0u];
     output.right_reference = runtime->state.auto_gain_references[1u];
+    output.left_smoothed = runtime->state.smoothed_levels[0u];
+    output.right_smoothed = runtime->state.smoothed_levels[1u];
     output.left_gate_open = runtime->state.gyver_left_noise_gate_open;
     output.right_gate_open = runtime->state.gyver_right_noise_gate_open;
     return true;
@@ -321,13 +327,39 @@ effects::EffectStatus diagnostic_renderer_stage_effect_scene(
 }
 
 bool diagnostic_renderer_restore_default_effect_scene() {
-    g_effect_engine.restore_default_scene();
+    std::array<effects::StripEffectConfig, effects::kEffectStripCount> scene =
+        effects::reset_default_scene();
+    apply_volatile_gyver_vu_noise_floors(scene);
+    if (g_effect_engine.stage_scene(scene) != effects::EffectStatus::ok) {
+        return false;
+    }
     g_diagnostic_scenes_enabled = false;
     return true;
 }
 
 uint32_t diagnostic_renderer_configuration_generation() {
     return g_effect_engine.configuration_generation();
+}
+
+bool diagnostic_renderer_read_idle_config(effects::IdleLightingConfig& output) {
+    return g_idle_lighting.read_config(output);
+}
+
+effects::IdleLightingStatus diagnostic_renderer_stage_idle_config(
+    const effects::IdleLightingConfig& config) {
+    return g_idle_lighting.stage_config(config);
+}
+
+bool diagnostic_renderer_has_pending_idle_config() {
+    return g_idle_lighting.has_pending_config();
+}
+
+bool diagnostic_renderer_apply_pending_idle_config() {
+    return g_idle_lighting.apply_pending_config();
+}
+
+const effects::IdleLightingRuntime& diagnostic_renderer_idle_runtime() {
+    return g_idle_lighting.runtime();
 }
 
 const char* diagnostic_renderer_active_scene_name() {

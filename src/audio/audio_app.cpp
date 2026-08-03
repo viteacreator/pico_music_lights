@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "audio/audio_capture.hpp"
+#include "audio/idle_commands.hpp"
 #include "audio/spectrum_analyzer.hpp"
 #include "audio/vu_calibration.hpp"
 #include "led/diagnostic_renderer.hpp"
@@ -82,15 +83,28 @@ void print_vu_floors() {
         return;
     }
 
+    uint16_t hysteresis = 0u;
+    DiagnosticEffectRuntimeSnapshot runtime{};
+    for (std::size_t index = 0u; index < effects::kEffectStripCount; ++index) {
+        if (diagnostic_renderer_read_effect_runtime(index, runtime) &&
+            (runtime.config.type == effects::EffectType::gyver_vu_gradient ||
+             runtime.config.type == effects::EffectType::gyver_vu_rainbow)) {
+            hysteresis = runtime.config.gyver_noise_gate_hysteresis;
+            break;
+        }
+    }
     const int length = std::snprintf(
         g_telemetry_line.data(),
         g_telemetry_line.size(),
-        "DBG command vu_noise_floors left=%u right=%u hysteresis=%u last_left=%u last_right=%u\n",
+        "DBG command vu_noise_floors measured_left=%u measured_right=%u "
+        "floor_left=%u floor_right=%u hysteresis=%u mode=%s\n",
+        g_vu_calibration_left_peak,
+        g_vu_calibration_right_peak,
         left_floor,
         right_floor,
-        4u,
-        g_vu_calibration_last_left_floor,
-        g_vu_calibration_last_right_floor);
+        hysteresis,
+        (g_vu_calibration_last_left_floor == 0u &&
+         g_vu_calibration_last_right_floor == 0u) ? "defaults" : "calibrated");
     if (length > 0 && static_cast<std::size_t>(length) < g_telemetry_line.size()) {
         (void)write_usb_line(g_telemetry_line.data(), static_cast<std::size_t>(length));
     }
@@ -154,8 +168,93 @@ void update_vu_calibration(const AudioLevelFrame& frame) {
     }
 }
 
+void print_idle_status() {
+    effects::IdleLightingConfig config{};
+    (void)diagnostic_renderer_read_idle_config(config);
+    const effects::IdleLightingRuntime& runtime = diagnostic_renderer_idle_runtime();
+    const int length = std::snprintf(
+        g_telemetry_line.data(),
+        g_telemetry_line.size(),
+        "DBG command idle enabled=%u startup=%u state=%u mix=%u active=%u,%u,%u "
+        "inactive_ms=%lu timeout_ms=%u confirm_ms=%u color=%u,%u,%u,%u brightness_q8=%u "
+        "input_mask=0x%02x strip_mask=0x%02x floors=%u,%u,%u hysteresis=%u fades=%u,%u\n",
+        config.enabled ? 1u : 0u,
+        config.startup_idle_enabled ? 1u : 0u,
+        static_cast<unsigned>(runtime.state),
+        runtime.effect_mix,
+        runtime.left_active ? 1u : 0u,
+        runtime.right_active ? 1u : 0u,
+        runtime.aux_active ? 1u : 0u,
+        static_cast<unsigned long>(runtime.inactive_ms),
+        config.silence_timeout_ms,
+        config.audio_confirmation_ms,
+        config.idle_color_rgbw.red,
+        config.idle_color_rgbw.green,
+        config.idle_color_rgbw.blue,
+        config.idle_color_rgbw.white,
+        config.idle_brightness_q8,
+        static_cast<unsigned>(config.activity_input_mask),
+        static_cast<unsigned>(config.strip_enable_mask),
+        config.left_activity_floor,
+        config.right_activity_floor,
+        config.aux_activity_floor,
+        config.activity_hysteresis,
+        config.fade_to_effect_ms,
+        config.fade_to_idle_ms);
+    if (length > 0 && static_cast<std::size_t>(length) < g_telemetry_line.size()) {
+        (void)write_usb_line(g_telemetry_line.data(), static_cast<std::size_t>(length));
+    }
+}
+
+void stage_idle_enabled(bool enabled) {
+    effects::IdleLightingConfig config{};
+    (void)diagnostic_renderer_read_idle_config(config);
+    config.enabled = enabled;
+    if (diagnostic_renderer_stage_idle_config(config) == effects::IdleLightingStatus::ok) {
+        print_command_reply(enabled ? "idle_enable staged" : "idle_disable staged");
+    } else {
+        print_command_reply("idle configuration rejected");
+    }
+}
+
+void stage_idle_test_config() {
+    effects::IdleLightingConfig config{};
+    config.enabled = true;
+    config.startup_idle_enabled = true;
+    config.silence_timeout_ms = 10000u;
+    config.audio_confirmation_ms = 150u;
+    config.idle_color_rgbw = {0u, 0u, 0u, 255u};
+    config.idle_brightness_q8 = effects::kEffectUnityGain;
+    config.fade_to_effect_ms = 750u;
+    config.fade_to_idle_ms = 1500u;
+    config.activity_input_mask = effects::kIdleAllInputs;
+    config.strip_enable_mask = effects::kIdleAllStrips;
+    if (diagnostic_renderer_stage_idle_config(config) == effects::IdleLightingStatus::ok) {
+        print_command_reply("idle_test staged");
+    } else {
+        print_command_reply("idle_test rejected");
+    }
+}
+
 void handle_command_line() {
     g_command_line[g_command_length] = '\0';
+    const IdleCommandType idle_command = parse_idle_command(g_command_line.data());
+    if (idle_command == IdleCommandType::enable) {
+        stage_idle_enabled(true);
+        return;
+    }
+    if (idle_command == IdleCommandType::disable) {
+        stage_idle_enabled(false);
+        return;
+    }
+    if (idle_command == IdleCommandType::status) {
+        print_idle_status();
+        return;
+    }
+    if (idle_command == IdleCommandType::test) {
+        stage_idle_test_config();
+        return;
+    }
     const VuCalibrationCommand command =
         parse_vu_calibration_command(g_command_line.data());
     if (command.type == VuCalibrationCommandType::report_floors) {
@@ -262,15 +361,15 @@ bool try_deliver_startup_report() {
 
 void print_telemetry() {
     const DiagnosticRendererStats& renderer = diagnostic_renderer_stats();
-    const int length = std::snprintf(
+    const effects::IdleLightingRuntime& idle = diagnostic_renderer_idle_runtime();
+    effects::IdleLightingConfig idle_config{};
+    (void)diagnostic_renderer_read_idle_config(idle_config);
+    int length = std::snprintf(
         g_telemetry_line.data(),
         g_telemetry_line.size(),
-        "DBG audio_seq=%lu L=%u R=%u Aux=%u Mono=%u adc_drop=%lu "
-        "adc_over=%lu adc_under=%lu spectrum_seq=%lu bass=%u low=%u mid=%u high=%u "
-        "fft_us=%lu fft_max_us=%lu dropped_windows=%lu missing_audio_blocks=%lu "
-        "audio_work_us=%lu audio_work_max_us=%lu scene=%s cfg_gen=%lu "
-        "effect_us=%lu effect_max_us=%lu effect_skip=%lu effect_fail=%lu "
-        "led_frame_timeouts=%lu\n",
+        "DBG core audio_seq=%lu L=%u R=%u Aux=%u Mono=%u adc_drop=%lu adc_over=%lu "
+        "adc_under=%lu fft_us=%lu fft_max_us=%lu audio_work_us=%lu audio_work_max_us=%lu "
+        "dropped_windows=%lu missing_audio_blocks=%lu\n",
         static_cast<unsigned long>(g_audio_frame.sequence),
         g_audio_frame.left,
         g_audio_frame.right,
@@ -279,17 +378,27 @@ void print_telemetry() {
         static_cast<unsigned long>(g_audio_frame.dropped_blocks),
         static_cast<unsigned long>(audio_capture_fifo_errors()),
         static_cast<unsigned long>(audio_capture_fifo_underflows()),
+        static_cast<unsigned long>(g_spectrum_frame.analysis_time_us),
+        static_cast<unsigned long>(g_maximum_analysis_us),
+        static_cast<unsigned long>(g_audio_work_us),
+        static_cast<unsigned long>(g_maximum_audio_work_us),
+        static_cast<unsigned long>(g_spectrum_frame.dropped_windows),
+        static_cast<unsigned long>(g_spectrum_frame.missing_audio_blocks));
+
+    if (length > 0 && static_cast<std::size_t>(length) < g_telemetry_line.size()) {
+        (void)write_usb_line(g_telemetry_line.data(), static_cast<std::size_t>(length));
+    }
+
+    length = std::snprintf(
+        g_telemetry_line.data(),
+        g_telemetry_line.size(),
+        "DBG effects spectrum_seq=%lu bass=%u low=%u mid=%u high=%u scene=%s cfg_gen=%lu "
+        "effect_us=%lu effect_max_us=%lu effect_skip=%lu effect_fail=%lu led_timeouts=%lu\n",
         static_cast<unsigned long>(g_spectrum_frame.sequence),
         g_spectrum_frame.bass,
         g_spectrum_frame.low,
         g_spectrum_frame.mid,
         g_spectrum_frame.high,
-        static_cast<unsigned long>(g_spectrum_frame.analysis_time_us),
-        static_cast<unsigned long>(g_maximum_analysis_us),
-        static_cast<unsigned long>(g_spectrum_frame.dropped_windows),
-        static_cast<unsigned long>(g_spectrum_frame.missing_audio_blocks),
-        static_cast<unsigned long>(g_audio_work_us),
-        static_cast<unsigned long>(g_maximum_audio_work_us),
         diagnostic_renderer_active_scene_name(),
         static_cast<unsigned long>(diagnostic_renderer_configuration_generation()),
         static_cast<unsigned long>(renderer.effect_render_us),
@@ -298,15 +407,29 @@ void print_telemetry() {
         static_cast<unsigned long>(renderer.effect_frames_failed),
         static_cast<unsigned long>(renderer.led_frame_timeouts));
 
-    if (length <= 0 ||
-        static_cast<std::size_t>(length) >= g_telemetry_line.size() ||
-        !tud_cdc_connected() ||
-        tud_cdc_write_available() < static_cast<uint32_t>(length)) {
-        return;
+    if (length > 0 && static_cast<std::size_t>(length) < g_telemetry_line.size()) {
+        (void)write_usb_line(g_telemetry_line.data(), static_cast<std::size_t>(length));
     }
 
-    (void)tud_cdc_write(g_telemetry_line.data(), static_cast<uint32_t>(length));
-    tud_cdc_write_flush();
+    length = std::snprintf(
+        g_telemetry_line.data(),
+        g_telemetry_line.size(),
+        "DBG idle enabled=%u state=%u mix=%u active_l=%u active_r=%u active_a=%u "
+        "inactive_ms=%lu input_mask=0x%02x strip_mask=0x%02x timeout_ms=%u confirm_ms=%u\n",
+        idle_config.enabled ? 1u : 0u,
+        static_cast<unsigned>(idle.state),
+        idle.effect_mix,
+        idle.left_active ? 1u : 0u,
+        idle.right_active ? 1u : 0u,
+        idle.aux_active ? 1u : 0u,
+        static_cast<unsigned long>(idle.inactive_ms),
+        static_cast<unsigned>(idle_config.activity_input_mask),
+        static_cast<unsigned>(idle_config.strip_enable_mask),
+        idle_config.silence_timeout_ms,
+        idle_config.audio_confirmation_ms);
+    if (length > 0 && static_cast<std::size_t>(length) < g_telemetry_line.size()) {
+        (void)write_usb_line(g_telemetry_line.data(), static_cast<std::size_t>(length));
+    }
 }
 
 void print_vu_telemetry() {
@@ -346,7 +469,7 @@ void print_vu_telemetry() {
         g_telemetry_line.data(),
         g_telemetry_line.size(),
         "DBG vu strip=%u raw_l=%u raw_r=%u effective_l=%u effective_r=%u gate_l=%u gate_r=%u "
-        "ref_l=%u ref_r=%u floor_l=%u floor_r=%u hysteresis=%u calibration=%s\n",
+        "smooth_l=%u smooth_r=%u ref_l=%u ref_r=%u floor_l=%u floor_r=%u hysteresis=%u calibration=%s\n",
         static_cast<unsigned>(strip_index),
         g_audio_frame.left_peak,
         g_audio_frame.right_peak,
@@ -354,6 +477,8 @@ void print_vu_telemetry() {
         right_effective,
         runtime.left_gate_open ? 1u : 0u,
         runtime.right_gate_open ? 1u : 0u,
+        runtime.left_smoothed,
+        runtime.right_smoothed,
         runtime.left_reference,
         runtime.right_reference,
         runtime.config.gyver_left_noise_floor,
