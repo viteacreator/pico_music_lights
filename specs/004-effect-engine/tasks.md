@@ -1,4 +1,4 @@
-# Feature 004 — Tasks
+# Feature 004 - Tasks
 
 - [x] Define fixed engine configuration, state, source compatibility and
   atomic pending-scene API.
@@ -31,7 +31,7 @@
   expand isolated diagnostic scenes to cover Gyver and generic catalogs.
 - [x] Add focused Gyver catalog host regressions for event layouts, policies,
   auto gain, centre history, short spans, reset data and scene cycling.
-- [ ] Configure, compile and execute all five warning-enabled native host
+- [x] Configure, compile and execute all five warning-enabled native host
   targets after the stabilization regressions: `led_logic_tests`,
   `audio_processing_tests`, `spectrum_analysis_tests`,
   `diagnostic_renderer_tests`, and `effect_engine_tests`.
@@ -42,4 +42,7 @@
   comet tail orientation, and generic Macro Bands mapping.
 - [x] Add bounded volatile USB VU-noise calibration and rate-limited VU
   telemetry through the public staged-configuration boundary.
+- [x] Add Linear VU public-source validation, static effect/Idle parameter
+  metadata, canonical defaults, timestamp-valid Idle timers, Idle USB controls,
+  bounded split telemetry, and permanent Idle/Linear VU host regressions.
 - [ ] Complete quiet-input and ordinary-music physical validation.

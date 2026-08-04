@@ -37,6 +37,7 @@ effects::DiagnosticSceneId g_active_diagnostic_scene =
 bool g_diagnostic_scenes_enabled = true;
 uint16_t g_volatile_gyver_left_noise_floor = 32u;
 uint16_t g_volatile_gyver_right_noise_floor = 32u;
+constexpr uint16_t kVolatileGyverVuHysteresis = 4u;
 
 bool is_gyver_vu(const effects::StripEffectConfig& config) {
     return config.type == effects::EffectType::gyver_vu_gradient ||
@@ -296,6 +297,10 @@ bool diagnostic_renderer_volatile_gyver_vu_noise_floors(
     left_floor = g_volatile_gyver_left_noise_floor;
     right_floor = g_volatile_gyver_right_noise_floor;
     return true;
+}
+
+uint16_t diagnostic_renderer_volatile_gyver_vu_hysteresis() {
+    return kVolatileGyverVuHysteresis;
 }
 
 bool diagnostic_renderer_read_effect_runtime(

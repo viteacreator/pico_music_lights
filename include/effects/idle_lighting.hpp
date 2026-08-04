@@ -111,6 +111,25 @@ enum EffectParameterMask : uint32_t {
     effect_parameter_geometry = 1u << 8u,
     effect_parameter_strobe = 1u << 9u,
     effect_parameter_gyver_adaptive = 1u << 10u,
+    effect_parameter_static_white_boost = 1u << 11u,
+    effect_parameter_frequency_selection = 1u << 12u,
+    effect_parameter_comet = 1u << 13u,
+    effect_parameter_gyver_vu_gate = 1u << 14u,
+    effect_parameter_spectrum_gate = 1u << 15u,
+    effect_parameter_running_policy = 1u << 16u,
+    effect_parameter_macro_mapping = 1u << 17u,
+};
+
+enum class ParameterValueType : uint8_t { boolean, unsigned_integer, colour, bitmask, enumeration };
+struct ParameterDescriptor {
+    const char* identifier;
+    const char* display_name;
+    ParameterValueType value_type;
+    const char* unit;
+    uint32_t minimum;
+    uint32_t maximum;
+    uint32_t step;
+    uint32_t canonical_default;
 };
 
 struct EffectMetadata {
@@ -122,5 +141,9 @@ struct EffectMetadata {
 };
 
 const EffectMetadata* effect_metadata(EffectType type);
+const ParameterDescriptor* effect_parameter_descriptor(EffectParameterMask parameter);
+StripEffectConfig canonical_effect_config(EffectType type);
+const ParameterDescriptor* idle_parameter_descriptor(std::size_t index);
+constexpr std::size_t kIdleParameterDescriptorCount = 12u;
 
 }  // namespace effects

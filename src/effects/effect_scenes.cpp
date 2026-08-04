@@ -101,9 +101,12 @@ std::array<StripEffectConfig, kEffectStripCount> diagnostic_scene(
     if (scene_id == DiagnosticSceneId::extended_generic) {
         StripEffectConfig generic_vu{};
         generic_vu.enabled = true;
-        generic_vu.type = EffectType::scalar_vu;
-        generic_vu.source = EffectSource::mono;
+        generic_vu.type = EffectType::stereo_center_out_vu;
+        generic_vu.source = EffectSource::stereo_left_right;
         generic_vu.primary_color = {0, 255, 32, 0};
+        generic_vu.secondary_color = {32, 96, 255, 0};
+        generic_vu.vu_color_mode = VuColorMode::animated_rainbow;
+        generic_vu.color_spacing_q8 = 384u;
         scene[0] = generic_vu;
 
         StripEffectConfig generic_spectrum{};

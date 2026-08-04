@@ -83,16 +83,7 @@ void print_vu_floors() {
         return;
     }
 
-    uint16_t hysteresis = 0u;
-    DiagnosticEffectRuntimeSnapshot runtime{};
-    for (std::size_t index = 0u; index < effects::kEffectStripCount; ++index) {
-        if (diagnostic_renderer_read_effect_runtime(index, runtime) &&
-            (runtime.config.type == effects::EffectType::gyver_vu_gradient ||
-             runtime.config.type == effects::EffectType::gyver_vu_rainbow)) {
-            hysteresis = runtime.config.gyver_noise_gate_hysteresis;
-            break;
-        }
-    }
+    const uint16_t hysteresis = diagnostic_renderer_volatile_gyver_vu_hysteresis();
     const int length = std::snprintf(
         g_telemetry_line.data(),
         g_telemetry_line.size(),

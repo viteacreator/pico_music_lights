@@ -61,6 +61,7 @@ bool diagnostic_renderer_set_volatile_gyver_vu_noise_floors(
 bool diagnostic_renderer_volatile_gyver_vu_noise_floors(
     uint16_t& left_floor,
     uint16_t& right_floor);
+uint16_t diagnostic_renderer_volatile_gyver_vu_hysteresis();
 bool diagnostic_renderer_read_effect_runtime(
     std::size_t strip_index,
     DiagnosticEffectRuntimeSnapshot& output);

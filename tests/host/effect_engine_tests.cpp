@@ -1596,13 +1596,13 @@ bool test_gyver_vu_raw_noise_gate_and_release() {
            lit_pixel_count(pixels) == 0u;
 }
 
-bool test_idle_lighting_configuration_activity_and_blending() {
+bool test_idle_lighting_timestamp_zero_confirmation() {
     effects::IdleLightingController controller;
     effects::IdleLightingConfig config{};
     config.enabled = true;
     config.startup_idle_enabled = true;
-    config.silence_timeout_ms = 10u;
-    config.audio_confirmation_ms = 0u;
+    config.silence_timeout_ms = 1000u;
+    config.audio_confirmation_ms = 100u;
     config.fade_to_effect_ms = 0u;
     config.fade_to_idle_ms = 0u;
     config.idle_color_rgbw = {0u, 0u, 0u, 255u};
@@ -1612,40 +1612,229 @@ bool test_idle_lighting_configuration_activity_and_blending() {
     }
 
     AudioLevelFrame audio{};
+    audio.left_peak = 200u;
+    controller.update(audio, 0u);
+    if (controller.runtime().state != effects::IdleLightingState::idle ||
+        controller.runtime().effect_mix != 0u ||
+        !controller.runtime().active_timer_valid ||
+        controller.runtime().active_since_us != 0u) {
+        return false;
+    }
+
+    controller.update(audio, 99000u);
+    if (controller.runtime().state != effects::IdleLightingState::idle) {
+        return false;
+    }
+
+    controller.update(audio, 100000u);
+    return controller.runtime().state == effects::IdleLightingState::effects &&
+           controller.runtime().effect_mix == 65535u;
+}
+
+bool test_idle_lighting_brightness_and_blending() {
+    effects::IdleLightingController controller;
+    effects::IdleLightingConfig config{};
+    config.enabled = true;
+    config.startup_idle_enabled = true;
+    config.idle_color_rgbw = {200u, 100u, 50u, 255u};
+    config.idle_brightness_q8 = 128u;
+    config.fade_to_idle_ms = 0u;
+    config.fade_to_effect_ms = 0u;
+    if (controller.stage_config(config) != effects::IdleLightingStatus::ok ||
+        !controller.apply_pending_config()) {
+        return false;
+    }
+
+    effects::IdleLightingConfig invalid = config;
+    invalid.idle_brightness_q8 = static_cast<uint16_t>(
+        effects::kEffectUnityGain + 1u);
+    if (controller.validate_config(invalid) !=
+        effects::IdleLightingStatus::invalid_parameter) {
+        return false;
+    }
+
+    AudioLevelFrame audio{};
     controller.update(audio, 0u);
     std::array<RgbwColor, 2> pixels{{kRed, kRed}};
     std::array<EffectRenderSpan, effects::kEffectStripCount> spans{};
     spans[0] = {pixels.data(), pixels.size()};
     controller.blend(spans);
-    if (!colors_equal(pixels[0], {0u, 0u, 0u, 255u}) ||
+    if (!colors_equal(pixels[0], {100u, 50u, 25u, 128u}) ||
+        !colors_equal(pixels[1], {100u, 50u, 25u, 128u}) ||
         controller.runtime().state != effects::IdleLightingState::idle) {
         return false;
     }
 
-    audio.left_peak = 200u;
-    controller.update(audio, 1000u);
-    pixels = {kRed, kRed};
-    controller.blend(spans);
-    if (!colors_equal(pixels[0], kRed) ||
-        controller.runtime().state != effects::IdleLightingState::effects) {
-        return false;
-    }
-
-    config.strip_enable_mask = 0u;
+    config.enabled = false;
     if (controller.stage_config(config) != effects::IdleLightingStatus::ok ||
         !controller.apply_pending_config()) {
         return false;
     }
-    controller.update(audio, 2000u);
-    pixels = {kGreen, kGreen};
+    pixels = {kRed, kRed};
     controller.blend(spans);
-    return colors_equal(pixels[0], kGreen) &&
-           std::strcmp(effects::effect_identifier(EffectType::scalar_vu),
-                       "linear_vu") == 0 &&
-           std::strcmp(effects::effect_display_name(EffectType::scalar_vu),
-                       "Linear VU") == 0 &&
-           effects::effect_supports_source(EffectType::scalar_vu,
-                                           EffectSource::aux);
+    return colors_equal(pixels[0], kRed) && colors_equal(pixels[1], kRed);
+}
+
+bool test_idle_lighting_masks_hysteresis_and_non_disruptive_updates() {
+    effects::IdleLightingController controller;
+    effects::IdleLightingConfig config{};
+    config.enabled = true;
+    config.startup_idle_enabled = true;
+    config.silence_timeout_ms = 1000u;
+    config.audio_confirmation_ms = 0u;
+    config.fade_to_effect_ms = 0u;
+    config.fade_to_idle_ms = 0u;
+    config.activity_input_mask = effects::kIdleActivityLeft;
+    config.strip_enable_mask = 1u << 1u;
+    config.left_activity_floor = 32u;
+    config.activity_hysteresis = 4u;
+    config.idle_color_rgbw = kWhite;
+    if (controller.stage_config(config) != effects::IdleLightingStatus::ok ||
+        !controller.apply_pending_config()) {
+        return false;
+    }
+
+    AudioLevelFrame audio{};
+    audio.left_peak = 33u;
+    controller.update(audio, 0u);
+    if (!controller.runtime().left_active ||
+        controller.runtime().state != effects::IdleLightingState::effects) {
+        return false;
+    }
+
+    audio.left_peak = 30u;
+    controller.update(audio, 33000u);
+    if (!controller.runtime().left_active) {
+        return false;
+    }
+    audio.left_peak = 28u;
+    controller.update(audio, 66000u);
+    if (controller.runtime().left_active) {
+        return false;
+    }
+
+    // A brightness/mask change preserves activity timing and state. It must
+    // not reset the controller merely because visual configuration changed.
+    config.idle_brightness_q8 = 128u;
+    config.strip_enable_mask = (1u << 0u) | (1u << 1u);
+    if (controller.stage_config(config) != effects::IdleLightingStatus::ok ||
+        !controller.apply_pending_config() || !controller.runtime().initialized ||
+        controller.runtime().last_timestamp_us != 66000u) {
+        return false;
+    }
+
+    std::array<RgbwColor, 1> first{{kRed}};
+    std::array<RgbwColor, 1> second{{kGreen}};
+    std::array<RgbwColor, 1> third{{kBlue}};
+    std::array<EffectRenderSpan, effects::kEffectStripCount> spans{};
+    spans[0] = {first.data(), first.size()};
+    spans[1] = {second.data(), second.size()};
+    spans[2] = {third.data(), third.size()};
+    controller.update(audio, 1100000u);
+    controller.blend(spans);
+    return colors_equal(first[0], {0u, 0u, 0u, 128u}) &&
+           colors_equal(second[0], {0u, 0u, 0u, 128u}) &&
+           colors_equal(third[0], kBlue);
+}
+
+bool test_linear_vu_sources_directions_and_modes() {
+    EffectEngine validator;
+    for (const EffectSource source : {EffectSource::left,
+                                      EffectSource::right,
+                                      EffectSource::aux,
+                                      EffectSource::mono}) {
+        if (validator.validate_config(scalar_config(source, kRed)) !=
+            EffectStatus::ok) {
+            return false;
+        }
+    }
+    for (const EffectSource source : {EffectSource::none,
+                                      EffectSource::stereo_left_right,
+                                      EffectSource::spectrum_32,
+                                      EffectSource::macro_bands}) {
+        if (validator.validate_config(scalar_config(source, kRed)) !=
+            EffectStatus::incompatible_source) {
+            return false;
+        }
+    }
+    if (std::strcmp(effects::effect_identifier(EffectType::scalar_vu),
+                    "linear_vu") != 0 ||
+        std::strcmp(effects::effect_display_name(EffectType::scalar_vu),
+                    "Linear VU") != 0 ||
+        !effects::effect_supports_source(EffectType::scalar_vu,
+                                         EffectSource::aux) ||
+        effects::effect_supports_source(EffectType::scalar_vu,
+                                        EffectSource::spectrum_32)) {
+        return false;
+    }
+
+    AudioLevelFrame audio{};
+    audio.left_peak = 1024u;
+    audio.right_peak = 2047u;
+    audio.aux_peak = 512u;
+    audio.mono_metrics.peak = 1536u;
+    SpectrumFrame spectrum{};
+    std::array<EffectRenderSpan, effects::kEffectStripCount> spans =
+        empty_spans();
+    std::array<RgbwColor, 4u> pixels{};
+    spans[0] = {pixels.data(), pixels.size()};
+
+    StripEffectConfig solid = scalar_config(EffectSource::left, kRed);
+    solid.background_color = kBlue;
+    solid.vu_color_mode = VuColorMode::solid;
+    std::array<StripEffectConfig, effects::kEffectStripCount> scene =
+        off_scene();
+    scene[0] = solid;
+    EffectEngine solid_engine;
+    if (solid_engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+    solid_engine.render(snapshot(audio, spectrum, 33000u), spans);
+    if (!colors_equal(pixels[0], kRed) || !colors_equal(pixels[1], kRed) ||
+        !colors_equal(pixels[2], kBlue) || !colors_equal(pixels[3], kBlue)) {
+        return false;
+    }
+
+    solid.reversed = true;
+    EffectEngine reverse_engine;
+    scene[0] = solid;
+    if (reverse_engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+    reverse_engine.render(snapshot(audio, spectrum, 33000u), spans);
+    if (!colors_equal(pixels[0], kBlue) || !colors_equal(pixels[1], kBlue) ||
+        !colors_equal(pixels[2], kRed) || !colors_equal(pixels[3], kRed)) {
+        return false;
+    }
+
+    StripEffectConfig gradient = scalar_config(EffectSource::right, kRed);
+    gradient.vu_color_mode = VuColorMode::level_position_gradient;
+    gradient.palette = {kGreen, kBlue, kRed, kWhite};
+    EffectEngine gradient_engine;
+    scene[0] = gradient;
+    if (gradient_engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+    gradient_engine.render(snapshot(audio, spectrum, 33000u), spans);
+    if (!colors_equal(pixels[0], kGreen) || !colors_equal(pixels[3], kWhite)) {
+        return false;
+    }
+
+    StripEffectConfig rainbow = scalar_config(EffectSource::right, kRed);
+    rainbow.vu_color_mode = VuColorMode::animated_rainbow;
+    rainbow.animation_speed_q8 = 256u;
+    EffectEngine rainbow_engine;
+    scene[0] = rainbow;
+    if (rainbow_engine.stage_scene(scene) != EffectStatus::ok) {
+        return false;
+    }
+    rainbow_engine.render(snapshot(audio, spectrum, 33000u), spans);
+    const RgbwColor first_rainbow = pixels[0];
+    if (colors_equal(pixels[0], pixels[1])) {
+        return false;
+    }
+    rainbow_engine.render(snapshot(audio, spectrum, 66000u), spans);
+    return !colors_equal(first_rainbow, pixels[0]);
 }
 
 struct NamedTest {
@@ -1656,7 +1845,7 @@ struct NamedTest {
 }  // namespace
 
 int main() {
-    constexpr std::array<NamedTest, 20> kTests{{
+    constexpr std::array<NamedTest, 23> kTests{{
         {"default scene and configuration API", test_default_scene_and_configuration_api},
         {"channel one has no runtime dependency", test_channel_one_has_no_runtime_dependency},
         {"validation and atomic scene staging", test_validation_and_atomic_scene_staging},
@@ -1684,8 +1873,14 @@ int main() {
          test_gyver_vu_auto_gain_and_spectrum_geometry},
         {"Gyver VU raw noise gate and release",
          test_gyver_vu_raw_noise_gate_and_release},
-        {"Idle Lighting configuration, activity, and blending",
-         test_idle_lighting_configuration_activity_and_blending},
+        {"Idle Lighting timestamp-zero confirmation",
+         test_idle_lighting_timestamp_zero_confirmation},
+        {"Idle Lighting brightness and blending",
+         test_idle_lighting_brightness_and_blending},
+        {"Idle Lighting masks, hysteresis, and non-disruptive updates",
+         test_idle_lighting_masks_hysteresis_and_non_disruptive_updates},
+        {"Linear VU sources, directions, and modes",
+         test_linear_vu_sources_directions_and_modes},
     }};
 
     for (const NamedTest& test : kTests) {

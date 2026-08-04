@@ -34,21 +34,57 @@ constexpr uint32_t kFrequency = kBasic | effect_parameter_source |
                                 effect_parameter_direction | effect_parameter_response |
                                 effect_parameter_animation | effect_parameter_gyver_adaptive;
 
+constexpr std::array<ParameterDescriptor, 18> kParameterDescriptors{{
+    {"enabled", "Enabled", ParameterValueType::boolean, "boolean", 0u, 1u, 1u, 0u},
+    {"source", "Audio Source", ParameterValueType::enumeration, "enum", 0u, 12u, 1u, 0u},
+    {"direction", "Direction", ParameterValueType::boolean, "boolean", 0u, 1u, 1u, 0u},
+    {"colours", "Colours", ParameterValueType::colour, "RGBW", 0u, 255u, 1u, 0u},
+    {"palette", "Palette", ParameterValueType::colour, "RGBW", 0u, 255u, 1u, 0u},
+    {"visual_gain", "Visual Gain", ParameterValueType::unsigned_integer, "Q8", 0u, 1024u, 1u, 256u},
+    {"response", "Attack / Release", ParameterValueType::unsigned_integer, "ms", 0u, 5000u, 1u, 0u},
+    {"animation", "Animation", ParameterValueType::unsigned_integer, "Q8", 0u, 4096u, 1u, 256u},
+    {"geometry", "Geometry", ParameterValueType::unsigned_integer, "count", 1u, 32u, 1u, 16u},
+    {"strobe", "Strobe", ParameterValueType::unsigned_integer, "Hz / percent", 0u, 100u, 1u, 8u},
+    {"gyver_adaptive", "Gyver Adaptive", ParameterValueType::unsigned_integer, "ms / percent", 0u, 5000u, 1u, 0u},
+    {"static_white_boost", "White Boost", ParameterValueType::unsigned_integer, "percent", 0u, 200u, 1u, 100u},
+    {"frequency_selection", "Frequency Selection", ParameterValueType::enumeration, "enum", 0u, 3u, 1u, 0u},
+    {"comet", "Comet Tail / Threshold", ParameterValueType::unsigned_integer, "percent / level", 0u, 65535u, 1u, 20u},
+    {"gyver_vu_gate", "Gyver VU Gate", ParameterValueType::unsigned_integer, "raw ADC", 0u, 2047u, 1u, 32u},
+    {"spectrum_gate", "Spectrum Floor / Peak", ParameterValueType::unsigned_integer, "level", 0u, 65535u, 1u, 256u},
+    {"running_policy", "Running Policy", ParameterValueType::enumeration, "enum", 0u, 1u, 1u, 0u},
+    {"macro_mapping", "Macro Mapping", ParameterValueType::enumeration, "enum", 0u, 1u, 1u, 0u},
+}};
+
+constexpr std::array<ParameterDescriptor, kIdleParameterDescriptorCount> kIdleParameterDescriptors{{
+    {"idle_enabled", "Idle Enabled", ParameterValueType::boolean, "boolean", 0u, 1u, 1u, 0u},
+    {"startup_idle", "Startup Idle", ParameterValueType::boolean, "boolean", 0u, 1u, 1u, 1u},
+    {"silence_timeout", "Silence Timeout", ParameterValueType::unsigned_integer, "ms", 0u, 60000u, 1u, 10000u},
+    {"audio_confirmation", "Audio Confirmation", ParameterValueType::unsigned_integer, "ms", 0u, 60000u, 1u, 150u},
+    {"idle_colour", "Idle Colour", ParameterValueType::colour, "RGBW", 0u, 255u, 1u, 255u},
+    {"idle_brightness", "Idle Brightness", ParameterValueType::unsigned_integer, "Q8", 0u, 256u, 1u, 256u},
+    {"fade_to_effect", "Fade To Effects", ParameterValueType::unsigned_integer, "ms", 0u, 60000u, 1u, 750u},
+    {"fade_to_idle", "Fade To Idle", ParameterValueType::unsigned_integer, "ms", 0u, 60000u, 1u, 1500u},
+    {"activity_inputs", "Activity Inputs", ParameterValueType::bitmask, "mask", 0u, 7u, 1u, 7u},
+    {"idle_strips", "Idle Strips", ParameterValueType::bitmask, "mask", 0u, 63u, 1u, 63u},
+    {"activity_floors", "Activity Floors", ParameterValueType::unsigned_integer, "raw ADC", 0u, 2047u, 1u, 32u},
+    {"activity_hysteresis", "Activity Hysteresis", ParameterValueType::unsigned_integer, "raw ADC", 0u, 2047u, 1u, 4u},
+}};
+
 constexpr std::array<EffectMetadata, 23> kMetadata{{
     {"off", "Off", EffectCategory::utility, kNoSource, effect_parameter_enabled},
-    {"static_rgbw", "Static RGBW", EffectCategory::static_light, kNoSource, kBasic},
+    {"static_rgbw", "Static RGBW", EffectCategory::static_light, kNoSource, kBasic | effect_parameter_static_white_boost},
     {"linear_vu", "Linear VU", EffectCategory::vu, kLinearSources, kVu},
     {"stereo_center_out_vu", "Stereo Centre-Out VU", EffectCategory::vu, kStereoSource, kVu},
     {"spectrum_bars", "Spectrum Bars", EffectCategory::spectrum, kSpectrumSource, kSpectrum},
     {"mirrored_spectrum_zones", "Mirrored Spectrum Zones", EffectCategory::spectrum, kSpectrumSource, kSpectrum},
     {"macro_bands", "Macro Bands", EffectCategory::spectrum, kMacroSource, kSpectrum},
-    {"one_band_frequency", "One-Band Frequency", EffectCategory::frequency, kMacroSource, kFrequency},
+    {"one_band_frequency", "One-Band Frequency", EffectCategory::frequency, kMacroSource, kBasic | effect_parameter_source | effect_parameter_response | effect_parameter_frequency_selection},
     {"stroboscope", "Stroboscope", EffectCategory::ambient, kNoSource, kBasic | effect_parameter_strobe},
     {"ambient_color_cycle", "Ambient Colour Cycle", EffectCategory::ambient, kNoSource, kBasic | effect_parameter_animation},
     {"running_rainbow", "Running Rainbow", EffectCategory::ambient, kNoSource, kBasic | effect_parameter_direction | effect_parameter_animation},
-    {"frequency_comet", "Frequency Comet", EffectCategory::frequency, kMacroSource, kFrequency},
-    {"gyver_vu_gradient", "Gyver VU Gradient", EffectCategory::vu, kStereoSource, kVu | effect_parameter_gyver_adaptive},
-    {"gyver_vu_rainbow", "Gyver VU Rainbow", EffectCategory::vu, kStereoSource, kVu | effect_parameter_gyver_adaptive},
+    {"frequency_comet", "Frequency Comet", EffectCategory::frequency, kMacroSource, kBasic | effect_parameter_source | effect_parameter_direction | effect_parameter_animation | effect_parameter_frequency_selection | effect_parameter_comet},
+    {"gyver_vu_gradient", "Gyver VU Gradient", EffectCategory::vu, kStereoSource, kVu | effect_parameter_gyver_vu_gate},
+    {"gyver_vu_rainbow", "Gyver VU Rainbow", EffectCategory::vu, kStereoSource, kVu | effect_parameter_gyver_vu_gate},
     {"gyver_frequency_5_zones", "Gyver Frequency 5 Zones", EffectCategory::frequency, kMacroSource, kFrequency},
     {"gyver_frequency_3_zones", "Gyver Frequency 3 Zones", EffectCategory::frequency, kMacroSource, kFrequency},
     {"gyver_frequency_full_strip", "Gyver Frequency Full Strip", EffectCategory::frequency, kMacroSource, kFrequency},
@@ -56,8 +92,8 @@ constexpr std::array<EffectMetadata, 23> kMetadata{{
     {"gyver_ambient_static", "Gyver Ambient Static", EffectCategory::ambient, kNoSource, kBasic},
     {"gyver_ambient_color_cycle", "Gyver Ambient Colour Cycle", EffectCategory::ambient, kNoSource, kBasic | effect_parameter_animation},
     {"gyver_ambient_running_rainbow", "Gyver Ambient Running Rainbow", EffectCategory::ambient, kNoSource, kBasic | effect_parameter_animation},
-    {"gyver_running_frequencies", "Gyver Running Frequencies", EffectCategory::frequency, kMacroSource, kFrequency},
-    {"gyver_spectrum_analyzer", "Gyver Spectrum Analyzer", EffectCategory::spectrum, kSpectrumSource, kSpectrum | effect_parameter_gyver_adaptive},
+    {"gyver_running_frequencies", "Gyver Running Frequencies", EffectCategory::frequency, kMacroSource, kFrequency | effect_parameter_running_policy},
+    {"gyver_spectrum_analyzer", "Gyver Spectrum Analyzer", EffectCategory::spectrum, kSpectrumSource, kBasic | effect_parameter_source | effect_parameter_palette | effect_parameter_response | effect_parameter_spectrum_gate},
 }};
 
 uint8_t scale_channel(uint8_t channel, uint16_t level) {
@@ -311,6 +347,59 @@ bool effect_supports_source(EffectType type, EffectSource source) {
 const EffectMetadata* effect_metadata(EffectType type) {
     const uint8_t index = static_cast<uint8_t>(type);
     return index < kMetadata.size() ? &kMetadata[index] : nullptr;
+}
+
+const ParameterDescriptor* effect_parameter_descriptor(EffectParameterMask parameter) {
+    uint8_t index = 0u;
+    uint32_t value = static_cast<uint32_t>(parameter);
+    if (value == 0u || (value & (value - 1u)) != 0u) {
+        return nullptr;
+    }
+    while ((value >>= 1u) != 0u) {
+        ++index;
+    }
+    return index < kParameterDescriptors.size() ? &kParameterDescriptors[index] : nullptr;
+}
+
+StripEffectConfig canonical_effect_config(EffectType type) {
+    StripEffectConfig config{};
+    config.type = type;
+    config.enabled = type != EffectType::off;
+    switch (type) {
+    case EffectType::off:
+    case EffectType::static_rgbw:
+    case EffectType::stroboscope:
+    case EffectType::ambient_color_cycle:
+    case EffectType::running_rainbow:
+    case EffectType::gyver_stroboscope:
+    case EffectType::gyver_ambient_static:
+    case EffectType::gyver_ambient_color_cycle:
+    case EffectType::gyver_ambient_running_rainbow:
+        config.source = EffectSource::none;
+        break;
+    case EffectType::scalar_vu:
+        config.source = EffectSource::left;
+        break;
+    case EffectType::stereo_center_out_vu:
+    case EffectType::gyver_vu_gradient:
+    case EffectType::gyver_vu_rainbow:
+        config.source = EffectSource::stereo_left_right;
+        break;
+    case EffectType::spectrum_bars:
+    case EffectType::mirrored_spectrum_zones:
+    case EffectType::gyver_spectrum_analyzer:
+        config.source = EffectSource::spectrum_32;
+        break;
+    default:
+        config.source = EffectSource::macro_bands;
+        break;
+    }
+    return config;
+}
+
+const ParameterDescriptor* idle_parameter_descriptor(std::size_t index) {
+    return index < kIdleParameterDescriptors.size() ?
+               &kIdleParameterDescriptors[index] : nullptr;
 }
 
 }  // namespace effects
