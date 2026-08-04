@@ -1,4 +1,4 @@
-# Feature 004 â€” Tasks
+# Feature 004 — Tasks
 
 - [x] Define fixed engine configuration, state, source compatibility and
   atomic pending-scene API.

@@ -1,4 +1,4 @@
-# Feature 004 â€” Design
+# Feature 004 — Design
 
 `EffectEngine` owns six fixed `StripEffectRuntime` slots. A runtime contains a
 configuration and bounded state. It has a separate pending scene so validation
@@ -84,7 +84,7 @@ temporal values, but their mode transition still invokes the same reset policy.
 
 ## ColorMusic behaviour audit and reusable mapping
 
-The official AlexGyver ColorMusic project page documents modes 1â€“9 and their
+The official AlexGyver ColorMusic project page documents modes 1–9 and their
 submodes; its linked GitHub repository is the firmware source reference. This
 project preserves visible behaviour rather than Arduino/WS2812, IR-remote,
 EEPROM, or AVR implementation details.

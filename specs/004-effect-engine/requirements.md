@@ -1,4 +1,4 @@
-# Feature 004 â€” Independent Per-Strip Effect Engine
+# Feature 004 — Independent Per-Strip Effect Engine
 
 ## Goal
 
@@ -47,8 +47,8 @@ coherent, read-only `AudioLevelFrame` and `SpectrumFrame` per LED frame.
   maximum and is attempted only in a no-ready-audio iteration.
 - The compiled reset-default scene is six independent value copies of one
   canonical configuration: Gyver VU Gradient, Stereo Left/Right source, Off
-  background, and a level-position Green â†’ Yellow â†’ Orange â†’ Red gradient.
-  Channel 1 has no master role or runtime relationship to Channels 2â€“6.
+  background, and a level-position Green → Yellow → Orange → Red gradient.
+  Channel 1 has no master role or runtime relationship to Channels 2–6.
 - VU colour modes are Solid, Level-Position Gradient, and Animated Rainbow.
   Gradient position is normalized from each half's logical centre to its end;
   rainbow phase, speed and spacing remain per-strip.

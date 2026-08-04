@@ -1,4 +1,4 @@
-# Pico Music Lights â€” Project Context
+# Pico Music Lights — Project Context
 
 ## Project goal
 
@@ -195,7 +195,7 @@ use the engine's application-facing configuration API in later features.
 
 The named future reset-default scene deliberately contains six value-copied, independent
 Gyver VU Gradient configurations. Each uses the shared Left/Right source,
-Off background, and a logical centre-to-end Green â†’ Yellow â†’ Orange â†’ Red
+Off background, and a logical centre-to-end Green → Yellow → Orange → Red
 gradient. This is a default scene only: no physical strip is a master and every
 strip may later select any compatible effect and parameters independently.
 
