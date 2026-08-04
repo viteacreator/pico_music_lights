@@ -7,7 +7,7 @@ checks all five host suites explicitly; and validates every firmware artifact.
 ## Prerequisites
 
 Provide Pico SDK 2.3.0 through `PICO_SDK_PATH`. `PATH` must select GCC and
-Clang host compilers, CMake, Ninja, Python 3, Git, Arm GNU Toolchain 15.2.Rel1
+Clang host compilers, CMake, Ninja, Python 3, Git, ripgrep, Arm GNU Toolchain 15.2.Rel1
 (GCC 15.2.1), and picotool 2.3.0. The verifier prints and validates the relevant
 versions and refuses SDK, board, toolchain, picotool, UF2-disable, or fallback
 mismatches.

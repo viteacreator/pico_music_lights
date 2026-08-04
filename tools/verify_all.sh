@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 IFS=$'\n\t'
+export PYTHONDONTWRITEBYTECODE=1
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
 readonly EXPECTED_TESTS=(led_logic_tests audio_processing_tests spectrum_analysis_tests diagnostic_renderer_tests effect_engine_tests)
-readonly REQUIRED_COMMANDS=(cmake ninja gcc g++ clang clang++ python3 git picotool arm-none-eabi-gcc arm-none-eabi-g++ arm-none-eabi-readelf arm-none-eabi-objcopy arm-none-eabi-size arm-none-eabi-nm arm-none-eabi-objdump)
+readonly REQUIRED_COMMANDS=(cmake ninja gcc g++ clang clang++ python3 git rg picotool arm-none-eabi-gcc arm-none-eabi-g++ arm-none-eabi-readelf arm-none-eabi-objcopy arm-none-eabi-size arm-none-eabi-nm arm-none-eabi-objdump)
 
 for command_name in "${REQUIRED_COMMANDS[@]}"; do
     command -v "${command_name}" >/dev/null || { echo "missing executable: ${command_name}" >&2; exit 2; }
@@ -65,7 +66,7 @@ run_host() {
         -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_COMPILER="${compiler}" \
         -DPICO_MUSIC_LIGHTS_HOST_SANITIZER="${sanitizer}" 2>&1 | tee "${log}"
     cmake --build "${build_dir}" --verbose 2>&1 | tee -a "${log}"
-    python3 - "${build_dir}" "${EXPECTED_TESTS[@]}" <<'PY'
+    PYTHONDONTWRITEBYTECODE=1 python3 - "${build_dir}" "${EXPECTED_TESTS[@]}" <<'PY'
 import json, subprocess, sys
 build, expected = sys.argv[1], sys.argv[2:]
 data = json.loads(subprocess.check_output(["ctest", "--test-dir", build, "--show-only=json-v1"], text=True))
@@ -111,7 +112,7 @@ cmake --build "${FIRMWARE_DIR}" --verbose 2>&1 | tee -a "${FIRMWARE_LOG}"
 if rg -i '(^|[^[:alpha:]])warning:' "${FIRMWARE_LOG}" >/dev/null; then fail "firmware compiler warning detected"; fi
 PREFIX="${FIRMWARE_DIR}/pico_music_lights"
 arm-none-eabi-objdump -d -S "${PREFIX}.elf" > "${PREFIX}.dis"
-python3 "${SCRIPT_DIR}/validate_firmware.py" --prefix "${PREFIX}" \
+PYTHONDONTWRITEBYTECODE=1 python3 "${SCRIPT_DIR}/validate_firmware.py" --prefix "${PREFIX}" \
     --tool-prefix arm-none-eabi- --picotool "$(command -v picotool)" \
     --report "${OUTPUT_DIR}/firmware-size-report.txt" | tee -a "${SUMMARY}"
 pass "pico_w_release artifacts_validated"

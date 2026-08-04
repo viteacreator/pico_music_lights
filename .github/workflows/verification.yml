@@ -24,7 +24,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
-            build-essential clang cmake ninja-build python3 git libusb-1.0-0-dev pkg-config
+            build-essential clang cmake ninja-build python3 git ripgrep libusb-1.0-0-dev pkg-config
       - name: Install Pico SDK 2.3.0
         run: |
           sudo git clone --no-checkout https://github.com/raspberrypi/pico-sdk.git "$PICO_SDK_PATH"
