@@ -27,7 +27,9 @@ directions, Gyver hard-cut strobe, Comet tail direction, then the existing
    on Channel 1 and confirm Channels 2-6 remain unchanged.
 5. Confirm Gyver Frequency 5 Zones reads High|Mid|Low|Mid|High and Gyver
    Frequency 3 Zones reads High|Mid|Low. Check reversal swaps the logical
-   layouts, and verify Gyver Full Strip High-first and strongest-event policies.
+   layouts, then independently verify Gyver Full Strip `full_strip_policy` and
+   Gyver Running Frequencies `running_policy` in both `gyver_priority` and
+   `strongest_event` modes.
 6. Confirm Gyver Running Frequencies starts at the centre and moves matching
    colour history toward both ends on odd and even strips. Confirm the Gyver
    Spectrum Analyzer is mirrored with low bands at centre and high bands at
@@ -51,3 +53,6 @@ directions, Gyver hard-cut strobe, Comet tail direction, then the existing
 12. The strobe scene is rapid flashing: use appropriate photosensitivity
     precautions. Confirm Gyver Stroboscope switches directly between its full
     foreground and exact RGBW background with no intermediate fade.
+13. Stage generic Macro Bands with three regions and verify both
+    `low_mid_high` and `bass_mid_high` mappings. Confirm the selected mapping
+    affects only that strip and does not alter any unrelated effect.

@@ -118,6 +118,7 @@ enum EffectParameterMask : uint32_t {
     effect_parameter_spectrum_gate = 1u << 15u,
     effect_parameter_running_policy = 1u << 16u,
     effect_parameter_macro_mapping = 1u << 17u,
+    effect_parameter_full_strip_policy = 1u << 18u,
 };
 
 enum class ParameterValueType : uint8_t { boolean, unsigned_integer, colour, bitmask, enumeration };
@@ -130,6 +131,9 @@ struct ParameterDescriptor {
     uint32_t maximum;
     uint32_t step;
     uint32_t canonical_default;
+    // Null for numeric, colour and bitmask fields; a stable comma-separated
+    // token list for bounded enum/select fields.
+    const char* allowed_values = nullptr;
 };
 
 struct EffectMetadata {
@@ -142,8 +146,12 @@ struct EffectMetadata {
 
 const EffectMetadata* effect_metadata(EffectType type);
 const ParameterDescriptor* effect_parameter_descriptor(EffectParameterMask parameter);
+// Returns the fixed EffectType bit mask for effects that advertise this
+// public parameter. It returns zero for an invalid or non-single-bit mask.
+uint32_t effect_parameter_applicability(EffectParameterMask parameter);
 StripEffectConfig canonical_effect_config(EffectType type);
 const ParameterDescriptor* idle_parameter_descriptor(std::size_t index);
+constexpr std::size_t kEffectParameterDescriptorCount = 19u;
 constexpr std::size_t kIdleParameterDescriptorCount = 12u;
 
 }  // namespace effects

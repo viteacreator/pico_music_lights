@@ -192,50 +192,29 @@ std::array<StripEffectConfig, kEffectStripCount> diagnostic_scene(
     spectrum.enabled = true;
     spectrum.type = EffectType::gyver_frequency_5_zones;
     spectrum.source = EffectSource::macro_bands;
-    spectrum.segment_count = 16u;
-    spectrum.attack_ms = kDefaultVuAttackMs;
-    spectrum.release_ms = kDefaultVuReleaseMs;
-    spectrum.palette = {
-        RgbwColor{0, 255, 0, 0},
-        RgbwColor{255, 255, 0, 0},
-        RgbwColor{255, 128, 0, 0},
-        RgbwColor{255, 0, 0, 0},
-    };
     scene[0] = spectrum;
 
     StripEffectConfig zones{};
     zones.enabled = true;
     zones.type = EffectType::gyver_frequency_3_zones;
     zones.source = EffectSource::macro_bands;
-    zones.attack_ms = kDefaultVuAttackMs;
-    zones.release_ms = kDefaultVuReleaseMs;
-    zones.palette = spectrum.palette;
     scene[1] = zones;
 
     StripEffectConfig macro{};
     macro.enabled = true;
     macro.type = EffectType::gyver_frequency_full_strip;
     macro.source = EffectSource::macro_bands;
-    macro.macro_region_count = 3u;
-    macro.attack_ms = kDefaultVuAttackMs;
-    macro.release_ms = kDefaultVuReleaseMs;
-    macro.palette = spectrum.palette;
     scene[2] = macro;
 
     StripEffectConfig one_band{};
     one_band.enabled = true;
     one_band.type = EffectType::gyver_running_frequencies;
     one_band.source = EffectSource::macro_bands;
-    one_band.frequency_selection = FrequencySelection::three_frequencies;
-    one_band.primary_color = {0, 128, 255, 0};
-    one_band.attack_ms = kDefaultVuAttackMs;
-    one_band.release_ms = kDefaultVuReleaseMs;
     scene[3] = one_band;
 
     StripEffectConfig gyver_spectrum = spectrum;
     gyver_spectrum.type = EffectType::gyver_spectrum_analyzer;
     gyver_spectrum.source = EffectSource::spectrum_32;
-    gyver_spectrum.segment_count = 16u;
     scene[4] = gyver_spectrum;
 
     StripEffectConfig white_boost{};

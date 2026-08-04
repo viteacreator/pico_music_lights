@@ -219,6 +219,13 @@ auto gain, background, colour history and configuration remain independent for
 each strip. The generic circular trail remains available under the explicit
 name `frequency_comet`.
 
+Feature 004 also exposes static, bounded configuration metadata for future web
+work: stable effect/parameter identifiers, compatible sources, ranges, defaults
+and parameter applicability. Generic Macro Bands offers `low_mid_high` or
+`bass_mid_high` mapping. Gyver Full Strip owns `full_strip_policy`, while Gyver
+Running Frequencies owns the separate `running_policy`; both currently offer
+`gyver_priority` and `strongest_event` without coupling their future controls.
+
 The internal pixel representation shall preserve all four physical channels.
 
 Effects shall render RGBW values, not RGB values with an artificial alpha channel.

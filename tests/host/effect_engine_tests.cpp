@@ -1837,6 +1837,180 @@ bool test_linear_vu_sources_directions_and_modes() {
     return !colors_equal(first_rainbow, pixels[0]);
 }
 
+bool test_metadata_contract_and_canonical_defaults() {
+    EffectEngine validator;
+    std::array<const char*, 23u> effect_identifiers{};
+    for (uint8_t raw_type = static_cast<uint8_t>(EffectType::off);
+         raw_type <= static_cast<uint8_t>(EffectType::gyver_spectrum_analyzer);
+         ++raw_type) {
+        const EffectType type = static_cast<EffectType>(raw_type);
+        const effects::EffectMetadata* const metadata =
+            effects::effect_metadata(type);
+        if (metadata == nullptr || metadata->identifier[0] == '\0' ||
+            metadata->display_name[0] == '\0' ||
+            std::strcmp(metadata->identifier, "placeholder") == 0) {
+            return false;
+        }
+        for (uint8_t prior = 0u; prior < raw_type; ++prior) {
+            if (std::strcmp(effect_identifiers[prior], metadata->identifier) == 0) {
+                return false;
+            }
+        }
+        effect_identifiers[raw_type] = metadata->identifier;
+
+        const StripEffectConfig canonical = effects::canonical_effect_config(type);
+        if (canonical.type != type || validator.validate_config(canonical) !=
+                                          EffectStatus::ok) {
+            return false;
+        }
+
+        for (uint8_t raw_source = static_cast<uint8_t>(EffectSource::none);
+             raw_source <= static_cast<uint8_t>(EffectSource::macro_bands);
+             ++raw_source) {
+            StripEffectConfig proposal = canonical;
+            proposal.source = static_cast<EffectSource>(raw_source);
+            const bool metadata_allows =
+                (metadata->source_mask & (1u << raw_source)) != 0u;
+            const bool validator_allows =
+                validator.validate_config(proposal) == EffectStatus::ok;
+            if (metadata_allows != validator_allows ||
+                effects::effect_supports_source(type, proposal.source) !=
+                    metadata_allows) {
+                return false;
+            }
+        }
+    }
+
+    if (effects::effect_metadata(static_cast<EffectType>(255u)) != nullptr ||
+        validator.validate_config(effects::canonical_effect_config(
+            static_cast<EffectType>(255u))) != EffectStatus::invalid_effect_type) {
+        return false;
+    }
+
+    std::array<const char*, effects::kEffectParameterDescriptorCount> parameter_ids{};
+    for (uint8_t index = 0u; index < effects::kEffectParameterDescriptorCount;
+         ++index) {
+        const auto parameter = static_cast<effects::EffectParameterMask>(1u << index);
+        const effects::ParameterDescriptor* const descriptor =
+            effects::effect_parameter_descriptor(parameter);
+        if (descriptor == nullptr || descriptor->identifier[0] == '\0' ||
+            descriptor->display_name[0] == '\0' || descriptor->minimum > descriptor->maximum ||
+            descriptor->step == 0u ||
+            descriptor->canonical_default < descriptor->minimum ||
+            descriptor->canonical_default > descriptor->maximum ||
+            (descriptor->value_type == effects::ParameterValueType::enumeration &&
+             (descriptor->allowed_values == nullptr ||
+              descriptor->allowed_values[0] == '\0')) ||
+            effects::effect_parameter_applicability(parameter) == 0u) {
+            return false;
+        }
+        for (uint8_t prior = 0u; prior < index; ++prior) {
+            if (std::strcmp(parameter_ids[prior], descriptor->identifier) == 0) {
+                return false;
+            }
+        }
+        parameter_ids[index] = descriptor->identifier;
+    }
+
+    const auto has_parameter = [](EffectType type,
+                                  effects::EffectParameterMask parameter) {
+        const effects::EffectMetadata* const metadata =
+            effects::effect_metadata(type);
+        return metadata != nullptr &&
+               (metadata->parameter_mask & static_cast<uint32_t>(parameter)) != 0u;
+    };
+    if (!has_parameter(EffectType::macro_bands,
+                       effects::effect_parameter_macro_mapping) ||
+        has_parameter(EffectType::spectrum_bars,
+                      effects::effect_parameter_macro_mapping) ||
+        !has_parameter(EffectType::gyver_frequency_full_strip,
+                       effects::effect_parameter_full_strip_policy) ||
+        has_parameter(EffectType::gyver_running_frequencies,
+                      effects::effect_parameter_full_strip_policy) ||
+        !has_parameter(EffectType::gyver_running_frequencies,
+                       effects::effect_parameter_running_policy) ||
+        has_parameter(EffectType::gyver_frequency_full_strip,
+                      effects::effect_parameter_running_policy) ||
+        has_parameter(EffectType::one_band_frequency,
+                      effects::effect_parameter_direction) ||
+        has_parameter(EffectType::one_band_frequency,
+                      effects::effect_parameter_animation) ||
+        has_parameter(EffectType::gyver_frequency_full_strip,
+                      effects::effect_parameter_direction)) {
+        return false;
+    }
+    const effects::ParameterDescriptor* const full_strip_policy =
+        effects::effect_parameter_descriptor(
+            effects::effect_parameter_full_strip_policy);
+    if (full_strip_policy == nullptr ||
+        std::strcmp(full_strip_policy->identifier, "full_strip_policy") != 0 ||
+        full_strip_policy->value_type != effects::ParameterValueType::enumeration ||
+        std::strcmp(full_strip_policy->allowed_values,
+                    "gyver_priority,strongest_event") != 0 ||
+        full_strip_policy->canonical_default != 0u) {
+        return false;
+    }
+
+    StripEffectConfig macro = effects::canonical_effect_config(EffectType::macro_bands);
+    macro.macro_band_mapping = effects::GenericMacroBandMapping::low_mid_high;
+    if (validator.validate_config(macro) != EffectStatus::ok) {
+        return false;
+    }
+    macro.macro_band_mapping = effects::GenericMacroBandMapping::bass_mid_high;
+    if (validator.validate_config(macro) != EffectStatus::ok) {
+        return false;
+    }
+    macro.macro_band_mapping = static_cast<effects::GenericMacroBandMapping>(2u);
+    if (validator.validate_config(macro) != EffectStatus::invalid_parameter) {
+        return false;
+    }
+
+    StripEffectConfig full =
+        effects::canonical_effect_config(EffectType::gyver_frequency_full_strip);
+    full.gyver_full_strip_selection =
+        GyverFullStripSelectionPolicy::strongest_event;
+    if (validator.validate_config(full) != EffectStatus::ok) {
+        return false;
+    }
+    full.gyver_full_strip_selection =
+        static_cast<GyverFullStripSelectionPolicy>(2u);
+    if (validator.validate_config(full) != EffectStatus::invalid_parameter) {
+        return false;
+    }
+    const StripEffectConfig gyver_strobe =
+        effects::canonical_effect_config(EffectType::gyver_stroboscope);
+    if (gyver_strobe.strobe_fade_ms != 0u ||
+        gyver_strobe.strobe_envelope_mode != effects::StrobeEnvelopeMode::hard_cut) {
+        return false;
+    }
+
+    effects::IdleLightingController idle;
+    effects::IdleLightingConfig idle_config{};
+    if (idle.validate_config(idle_config) != effects::IdleLightingStatus::ok) {
+        return false;
+    }
+    std::array<const char*, effects::kIdleParameterDescriptorCount> idle_ids{};
+    for (std::size_t index = 0u; index < idle_ids.size(); ++index) {
+        const effects::ParameterDescriptor* const descriptor =
+            effects::idle_parameter_descriptor(index);
+        if (descriptor == nullptr || descriptor->identifier[0] == '\0' ||
+            descriptor->minimum > descriptor->maximum || descriptor->step == 0u ||
+            descriptor->canonical_default < descriptor->minimum ||
+            descriptor->canonical_default > descriptor->maximum) {
+            return false;
+        }
+        for (std::size_t prior = 0u; prior < index; ++prior) {
+            if (std::strcmp(idle_ids[prior], descriptor->identifier) == 0) {
+                return false;
+            }
+        }
+        idle_ids[index] = descriptor->identifier;
+    }
+    idle_config.idle_brightness_q8 = 257u;
+    return idle.validate_config(idle_config) ==
+           effects::IdleLightingStatus::invalid_parameter;
+}
+
 struct NamedTest {
     const char* name;
     bool (*function)();
@@ -1845,7 +2019,7 @@ struct NamedTest {
 }  // namespace
 
 int main() {
-    constexpr std::array<NamedTest, 23> kTests{{
+    constexpr std::array<NamedTest, 24> kTests{{
         {"default scene and configuration API", test_default_scene_and_configuration_api},
         {"channel one has no runtime dependency", test_channel_one_has_no_runtime_dependency},
         {"validation and atomic scene staging", test_validation_and_atomic_scene_staging},
@@ -1881,6 +2055,7 @@ int main() {
          test_idle_lighting_masks_hysteresis_and_non_disruptive_updates},
         {"Linear VU sources, directions, and modes",
          test_linear_vu_sources_directions_and_modes},
+        {"effect and Idle metadata contract", test_metadata_contract_and_canonical_defaults},
     }};
 
     for (const NamedTest& test : kTests) {

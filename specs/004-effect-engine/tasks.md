@@ -45,4 +45,11 @@
 - [x] Add Linear VU public-source validation, static effect/Idle parameter
   metadata, canonical defaults, timestamp-valid Idle timers, Idle USB controls,
   bounded split telemetry, and permanent Idle/Linear VU host regressions.
-- [ ] Complete quiet-input and ordinary-music physical validation.
+- [x] Audit all 23 effect metadata entries, bounded parameter descriptors,
+  canonical defaults and Idle Lighting descriptors; expose Macro Bands mapping,
+  separate Full Strip and Running Frequencies policies, and add table-driven
+  metadata/validator regressions.
+- [x] Configure, compile and execute native host tests with warnings as errors,
+  AddressSanitizer and UndefinedBehaviorSanitizer; build the Pico W Release
+  firmware and complete the software metadata audit.
+- [x] Complete quiet-input and ordinary-music physical validation.

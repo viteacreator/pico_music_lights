@@ -96,13 +96,16 @@ coherent, read-only `AudioLevelFrame` and `SpectrumFrame` per LED frame.
   brightness as their primary visible trigger.
 - Gyver Frequency 5 Zones is `High | Mid | Low | Mid | High`; Gyver Frequency 3
   Zones is `High | Mid | Low`. Direction reverses those logical layouts. Gyver
-  Full Strip supports `gyver_priority` (High, Mid, Low) and `strongest_event`.
+  Full Strip exposes only `full_strip_policy`: `gyver_priority` (High, Mid,
+  Low) or `strongest_event`. The canonical policy is `gyver_priority`.
 - Gyver Running Frequencies retains a fixed, per-strip half-history and mirrors
   it from the centre to both ends. Gyver Spectrum Analyzer maps all 32 spectrum
   bands from low at the centre to high at both ends and has adaptive display
   gain enabled by default.
-- Gyver Running Frequencies independently selects `gyver_priority` (High,
-  Mid, Low) or `strongest_event`; its default is `gyver_priority`. Gyver
+- Gyver Running Frequencies independently exposes only `running_policy`:
+  `gyver_priority` (High, Mid, Low) or `strongest_event`; its default is
+  `gyver_priority`. These two policy fields remain distinct for future web
+  configuration even though their current enum values match. Gyver
   Spectrum additionally requires an adjusted peak of at least
   `gyver_spectrum_minimum_peak` after per-band floor subtraction before it may
   initialize or update its adaptive reference.
@@ -115,6 +118,17 @@ coherent, read-only `AudioLevelFrame` and `SpectrumFrame` per LED frame.
   direction, solid/gradient/rainbow, RGBW palette/background, Q8 gain,
   attack/release, animation speed and rainbow-spacing configuration. It is
   distinct from Stereo Centre-Out VU.
+- Generic Macro Bands exposes `macro_mapping` only for this effect. With three
+  regions, `low_mid_high` selects Low, Mid, High and `bass_mid_high` selects
+  Bass, Mid, High; the canonical mapping is `low_mid_high`. Four regions always
+  use Bass, Low, Mid, High in that order.
+- The future configuration contract is static and bounded: each effect has
+  `EffectMetadata` (stable identifier, display name, category, compatible
+  source mask and parameter mask), and each public parameter has a
+  `ParameterDescriptor` (stable identifier, label, value type, unit, minimum,
+  maximum, step, canonical default and static effect applicability). Idle
+  Lighting has an equivalent bounded descriptor table. No JSON or UI
+  serialization is part of Feature 004.
 - Global Idle Lighting is a separate, fixed-size staged controller. It blends
   after effects render and before LED transport; all effects continue updating
   beneath it. Its defaults are disabled, startup-idle enabled, 10,000 ms
@@ -130,7 +144,10 @@ coherent, read-only `AudioLevelFrame` and `SpectrumFrame` per LED frame.
   configuration at the next renderer frame boundary; no persistence is added.
 - Gyver reactive effects use configurable RGBW background colour and Q8
   brightness, defaulting to off. Gyver Stroboscope additionally supports
-  frequency, duty cycle, fade and that background.
+  frequency, duty cycle, hard-cut foreground/background transitions and
+  background brightness. It has no fade-in, fade-out or selectable envelope;
+  `strobe_fade_ms` is zero in canonical and diagnostic configurations. Only
+  Generic Stroboscope may select a fade envelope.
 
 ## Definition of done
 

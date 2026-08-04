@@ -111,6 +111,20 @@ segments. Mirrored zones resample to a bounded zone count and map nearest-strip
 end toward centre as low-to-high. Macro regions use `floor(region_count * pixel
 / pixel_count)`, so all pixels are assigned for non-divisible lengths. Direction
 reverses logical geometry only; Feature 001 physical reversal remains separate.
+For three generic Macro Bands regions, `macro_mapping=low_mid_high` maps to
+Low/Mid/High and `macro_mapping=bass_mid_high` maps to Bass/Mid/High. The
+mapping is a Macro Bands-only metadata parameter; four regions remain the fixed
+Bass/Low/Mid/High sequence.
+
+The static future-web contract consists of `EffectMetadata` and
+`ParameterDescriptor` tables. Metadata provides stable effect identifier,
+display name, category, compatible-source bitmask and public parameter bitmask.
+Each descriptor provides a stable identifier, display label, value type, unit,
+minimum, maximum, step and canonical default; `effect_parameter_applicability()`
+returns the fixed set of effects that advertise the parameter. A separate
+12-entry Idle Lighting descriptor table covers every public Idle field or fixed
+field group. These tables are compile-time bounded and contain no JSON, heap or
+web dependency.
 
 The canonical reset-default scene is constructed once then copied by value into
 all six slots: `gyver_vu_gradient`, `stereo_left_right`, Off background, and
@@ -188,6 +202,13 @@ event. All fields are unsigned 0..65535 except the trigger percentage
 (100..1000). This is a provisional RP2040 parameterization of the requested
 v2.10 behaviour; exact original threshold/timing constants are not claimed.
 
+`gyver_frequency_full_strip` owns `gyver_full_strip_selection`, exposed as the
+metadata parameter `full_strip_policy`; `gyver_running_frequencies` owns the
+separate `gyver_running_frequencies_selection`, exposed as `running_policy`.
+Both accept `gyver_priority` (High, then Mid, then Low) and `strongest_event`
+and default to `gyver_priority`. The separate fields prevent future web code
+from inferring effect-specific semantics from a string.
+
 Gyver auto gain retains a per-strip reference for Left, Right and spectrum.
 The reference follows the ungained smoothed value using independently
 configured rise and slower fall times, but freezes while its VU gate is closed
@@ -216,5 +237,5 @@ Pico firmware/map; host tests validate functional bounds and determinism.
 The current ARM Release map reports the six-slot `EffectEngine` global as
 5,792 bytes of static SRAM. Its Gyver Running Frequencies half-history accounts
 for 3,600 of those bytes across six strips. The current Feature 004 Release
-firmware measures 91,196 bytes of text and 20,892 bytes of BSS. The final map
+firmware measures 93,996 bytes of text and 20,892 bytes of BSS. The final map
 remains authoritative after future changes.
