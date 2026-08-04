@@ -6,7 +6,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 enable_testing()
-option(PICO_MUSIC_LIGHTS_HOST_SANITIZERS "Enable ASan and UBSan for host tests" ON)
+set(PICO_MUSIC_LIGHTS_HOST_SANITIZER "none" CACHE STRING
+    "Host sanitizer: none, address, or undefined")
+set_property(CACHE PICO_MUSIC_LIGHTS_HOST_SANITIZER PROPERTY STRINGS
+    none address undefined)
+
+if(NOT PICO_MUSIC_LIGHTS_HOST_SANITIZER MATCHES "^(none|address|undefined)$")
+    message(FATAL_ERROR
+        "PICO_MUSIC_LIGHTS_HOST_SANITIZER must be none, address, or undefined")
+endif()
 
 function(configure_host_test target)
     target_include_directories(${target} PRIVATE ../../include ../../src)
@@ -15,9 +23,14 @@ function(configure_host_test target)
         target_compile_options(${target} PRIVATE /W4 /WX)
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
-        if(PICO_MUSIC_LIGHTS_HOST_SANITIZERS)
-            target_compile_options(${target} PRIVATE -fsanitize=address,undefined)
-            target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+        if(PICO_MUSIC_LIGHTS_HOST_SANITIZER STREQUAL "address")
+            target_compile_options(${target} PRIVATE
+                -fsanitize=address -fno-omit-frame-pointer)
+            target_link_options(${target} PRIVATE -fsanitize=address)
+        elseif(PICO_MUSIC_LIGHTS_HOST_SANITIZER STREQUAL "undefined")
+            target_compile_options(${target} PRIVATE
+                -fsanitize=undefined -fno-omit-frame-pointer)
+            target_link_options(${target} PRIVATE -fsanitize=undefined)
         endif()
     endif()
 
