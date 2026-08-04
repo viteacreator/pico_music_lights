@@ -60,6 +60,10 @@ def ihex(path: pathlib.Path) -> dict[int, int]:
     return image
 
 
+def metadata_has(text: str, label: str, value: str) -> bool:
+    return re.search(rf"^\s*{re.escape(label)}:\s+{re.escape(value)}\s*$", text, re.MULTILINE) is not None
+
+
 def allocated_sections(readelf: str) -> list[tuple[str, int, int]]:
     sections = []
     pattern = re.compile(r"^\s*\[\s*\d+\]\s+(\S+)\s+\S+\s+([0-9a-fA-F]+)\s+"
@@ -103,10 +107,12 @@ def main() -> int:
 
     elf_info = run(args.picotool, "info", "-a", str(artifacts[".elf"]))
     uf2_info = run(args.picotool, "info", "-a", str(artifacts[".uf2"]))
-    if "pico_board:        pico_w" not in elf_info or "sdk version:       2.3.0" not in elf_info:
+    if not metadata_has(elf_info, "pico_board", "pico_w") or not metadata_has(elf_info, "sdk version", "2.3.0"):
         raise ValueError("ELF picotool metadata does not identify Pico W and SDK 2.3.0")
-    if "family ID 'rp2040'" not in uf2_info or "pico_board:        pico_w" not in uf2_info:
-        raise ValueError("UF2 picotool metadata does not identify RP2040 Pico W")
+    if (not re.search(r"family\s+ID 'rp2040'", uf2_info)
+            or not metadata_has(uf2_info, "name", "pico_music_lights")
+            or not metadata_has(uf2_info, "pico_board", "pico_w")):
+        raise ValueError("UF2 picotool metadata does not identify RP2040 Pico W pico_music_lights")
 
     uf2 = artifacts[".uf2"].read_bytes()
     if len(uf2) % 512:

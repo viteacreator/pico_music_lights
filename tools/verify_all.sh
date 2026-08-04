@@ -43,7 +43,8 @@ ARM_VERSION="$(arm-none-eabi-gcc -dumpfullversion)"
 [[ "${ARM_VERSION}" == "15.2.1" ]] || fail "Arm GCC must be 15.2.1, found ${ARM_VERSION}"
 ARM_BANNER="$(arm-none-eabi-gcc --version | head -1)"
 [[ "${ARM_BANNER}" == *"Arm GNU Toolchain 15.2.Rel1"* ]] || fail "Arm toolchain must be Arm GNU Toolchain 15.2.Rel1, found ${ARM_BANNER}"
-ARM_BIN_DIR="$(dirname "$(realpath "$(command -v arm-none-eabi-gcc)")")"
+ARM_GCC_REAL="$(realpath "$(command -v arm-none-eabi-gcc)")"
+ARM_BIN_DIR="$(dirname "${ARM_GCC_REAL}")"
 for arm_tool in arm-none-eabi-g++ arm-none-eabi-readelf arm-none-eabi-objcopy arm-none-eabi-size arm-none-eabi-nm arm-none-eabi-objdump; do
     [[ "$(dirname "$(realpath "$(command -v "${arm_tool}")")")" == "${ARM_BIN_DIR}" ]] || fail "mixed Arm toolchain executable: ${arm_tool}"
 done
@@ -100,7 +101,11 @@ cmake -S "${REPO_ROOT}" -B "${FIRMWARE_DIR}" -G Ninja -DCMAKE_BUILD_TYPE=Release
 rg '^PICO_BOARD:STRING=pico_w$' "${FIRMWARE_DIR}/CMakeCache.txt" >/dev/null || fail "configured board is not pico_w"
 rg "^PICO_SDK_PATH:PATH=${PICO_SDK_PATH//\//\\/}$" "${FIRMWARE_DIR}/CMakeCache.txt" >/dev/null || fail "configured SDK path differs"
 rg 'CMAKE_C_COMPILER:(FILEPATH|STRING)=.*/arm-none-eabi-gcc$' "${FIRMWARE_DIR}/CMakeCache.txt" >/dev/null || fail "unexpected Arm compiler"
-rg "^PICO_TOOLCHAIN_PATH:[A-Z]+=${ARM_TOOLCHAIN_ROOT}$" "${FIRMWARE_DIR}/CMakeCache.txt" >/dev/null || fail "unexpected Arm toolchain path"
+PYTHONDONTWRITEBYTECODE=1 python3 "${SCRIPT_DIR}/check_toolchain_path.py" \
+    --cache "${FIRMWARE_DIR}/CMakeCache.txt" \
+    --expected-root "${ARM_TOOLCHAIN_ROOT}" \
+    --expected-bin "${ARM_BIN_DIR}" \
+    --expected-gcc "${ARM_GCC_REAL}" | tee -a "${SUMMARY}" || fail "unexpected Arm toolchain path"
 rg "^picotool_DIR:[A-Z]+=${PICOTOOL_CMAKE_DIR}$" "${FIRMWARE_DIR}/CMakeCache.txt" >/dev/null || fail "unexpected picotool configuration"
 rg -F "Using picotool from ${PICOTOOL_REAL}" "${FIRMWARE_LOG}" >/dev/null || fail "firmware did not select the validated picotool"
 if rg -i 'Downloading Picotool|No installed picotool' "${FIRMWARE_LOG}" >/dev/null; then fail "picotool fallback detected"; fi

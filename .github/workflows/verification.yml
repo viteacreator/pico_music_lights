@@ -51,18 +51,30 @@ jobs:
           echo /opt/picotool-2.3.0/picotool >> "$GITHUB_PATH"
       - name: Run authoritative verification
         run: tools/verify_all.sh
-      - name: Upload verification results
+      - name: Upload verification diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: pico-music-lights-verification
-          if-no-files-found: error
+          name: pico-music-lights-verification-diagnostics
+          if-no-files-found: warn
           path: |
             /tmp/pico-music-lights-verification/verification-summary.txt
+            /tmp/pico-music-lights-verification/host-*.log
+            /tmp/pico-music-lights-verification/firmware.log
+            /tmp/pico-music-lights-verification/firmware/CMakeCache.txt
+            /tmp/pico-music-lights-verification/firmware/CMakeFiles/CMakeConfigureLog.yaml
+            /tmp/pico-music-lights-verification/firmware/CMakeFiles/CMakeOutput.log
+            /tmp/pico-music-lights-verification/firmware-size-report.txt
+      - name: Upload successful firmware artifacts
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pico-music-lights-firmware-artifacts
+          if-no-files-found: error
+          path: |
             /tmp/pico-music-lights-verification/firmware/pico_music_lights.elf
             /tmp/pico-music-lights-verification/firmware/pico_music_lights.uf2
             /tmp/pico-music-lights-verification/firmware/pico_music_lights.bin
             /tmp/pico-music-lights-verification/firmware/pico_music_lights.hex
             /tmp/pico-music-lights-verification/firmware/pico_music_lights.elf.map
             /tmp/pico-music-lights-verification/firmware/pico_music_lights.dis
-            /tmp/pico-music-lights-verification/firmware-size-report.txt
