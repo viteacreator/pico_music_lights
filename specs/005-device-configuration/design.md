@@ -31,7 +31,9 @@ constexpr uint16_t kMaximumTotalPixels = board::kMaxConfiguredPixels;
 constexpr uint32_t kCurrentSchemaVersion = 1;
 
 struct PhysicalStripMetadata {
+    // Informational only. Zero length means unknown or not measured.
     uint32_t length_micrometres;
+    // Schema 1 stores 1..1000 pixels per metre; zero is invalid.
     uint16_t density_pixels_per_metre;
 };
 
@@ -53,10 +55,13 @@ struct AudioCalibrationConfig {
     uint16_t gyver_spectrum_minimum_peak;
 };
 
-// Idle Lighting activity floors and hysteresis remain owned by
-// effects::IdleLightingConfig and are serialized in the Idle Lighting record:
-// left_activity_floor, right_activity_floor, aux_activity_floor, and
-// activity_hysteresis.
+// Canonical device-level owner for Gyver calibration. These values are
+// serialized exactly once in the global audio-calibration record. The same
+// fields currently present in effects::StripEffectConfig are runtime mirrors
+// only and are excluded from persisted per-strip effect records. Idle Lighting
+// activity floors and hysteresis remain owned by effects::IdleLightingConfig
+// and are serialized in the Idle Lighting record: left_activity_floor,
+// right_activity_floor, aux_activity_floor, and activity_hysteresis.
 
 struct DeviceConfiguration {
     std::array<LedStripDeviceConfig, kDeviceStripCount> strips;
@@ -67,7 +72,7 @@ struct DeviceConfiguration {
 }
 ```
 
-Result types shall be bounded enums with detail fields such as failing section, strip index, field id, slot id, and fallback reason. Diagnostics store only the latest bounded summaries and counters, not unbounded logs.
+Result types shall be bounded enums with detail fields such as failing section, strip index, field id, slot id, and fallback reason. Diagnostics store only the latest bounded summaries and counters, not unbounded logs. Save coordination shall expose compile-time constants for LED-safe-point and audio-safe-point deadlines so timeout paths are deterministic and host-testable.
 
 ## Configuration state ownership
 
@@ -76,17 +81,17 @@ Result types shall be bounded enums with detail fields such as failing section, 
 - Draft configuration: owned by `ConfigService`; edited through validated setters or whole-draft replacement.
 - Last successfully persisted configuration: owned by `ConfigService`; updated only after a save or factory-reset write commits successfully, or after boot loads a valid supported record.
 
-Dirty state is true when the draft differs from the last persisted configuration, or when active preview differs from last persisted after a successful preview but before Save. Equality is deterministic field-by-field comparison, not byte comparison of structs.
+Dirty state is true when the draft differs from the last persisted configuration, or when active preview differs from last persisted after a successful preview but before Save. Equality is deterministic field-by-field comparison, not byte comparison of structs. Equality and dirty-state checks ignore duplicated Gyver calibration fields inside runtime `StripEffectConfig` mirrors and compare only `DeviceConfiguration::audio_calibration` for those values.
 
 ## Validation flow
 
-Field preview validation runs first and rejects invalid enum values, incompatible effect/source pairs, out-of-range effect parameters, brightness outside 0..255, Idle bounds, and safe audio-calibration bounds. Whole-configuration validation then checks six-strip invariants, fixed GP2–GP7 mapping, duplicate/invalid mappings, enabled-strip pixel counts, stored disabled-strip pixel counts, total enabled pixel count, physical metadata arithmetic, serialization-size limits, and all integer overflow risks. A disabled strip may store `pixel_count == 0` or retain a valid nonzero pixel count up to the per-strip maximum; disabled strips do not contribute to the total enabled-pixel limit, are rendered LED-off, and are not transmitted until re-enabled through a structural activation boundary.
+Field preview validation runs first and rejects invalid enum values, incompatible effect/source pairs, out-of-range effect parameters, brightness outside 0..255, Idle bounds, and safe audio-calibration bounds. Whole-configuration validation then checks six-strip invariants, fixed GP2–GP7 mapping, duplicate/invalid mappings, enabled-strip pixel counts, stored disabled-strip pixel counts, total enabled pixel count, physical metadata ranges, serialization-size limits, and all integer overflow risks. A disabled strip may store `pixel_count == 0` or retain a valid nonzero pixel count up to the per-strip maximum; disabled strips do not contribute to the total enabled-pixel limit, are rendered LED-off, and are not transmitted until re-enabled through a structural activation boundary. `pixel_count` is the sole operational rendering/transmission authority. `length_micrometres` and `density_pixels_per_metre` are informational only; changing either never recalculates or mutates `pixel_count`. `length_micrometres == 0` means unknown or not measured and is valid. Schema 1 accepts density 1..1000 pixels per metre and rejects zero density. Approximate or unknown physical metadata must not make validation reject an otherwise valid authoritative pixel count.
 
 Persistent validation additionally checks schema version, payload length, CRC32, commit marker, slot alignment, erase/program alignment, slot bounds, and application-image overlap. Future schema versions are classified as unsupported and are never interpreted as current payloads.
 
 ## Preview and activation flow
 
-Previewable non-structural changes are effects, colours, visual parameters, strip brightness, Idle Lighting settings, and safe audio calibration. Effect and Idle changes may be atomically published at the existing render boundary: the service validates the draft subset and stages effect and Idle configs through their existing staged APIs. Audio calibration is staged by value in fixed-capacity storage and consumed by audio processing only at an audio-block boundary or another named audio-safe point; it performs no heap allocation, flash access, or blocking diagnostics in the audio path. If any affected layer rejects the staged value, the whole publication fails and the active configuration is unchanged. The configuration generation increments only after all affected layers accept the change.
+Previewable non-structural changes are effects, colours, visual parameters, strip brightness, Idle Lighting settings, and safe audio calibration. Effect and Idle changes may be atomically published at the existing render boundary: the service validates the draft subset and stages effect and Idle configs through their existing staged APIs. Before staging any applicable Gyver runtime effect configuration, a configuration adapter overlays `DeviceConfiguration::audio_calibration` into the runtime mirror fields currently present in `effects::StripEffectConfig`. Reading active or draft configuration normalizes those mirrored fields from the canonical global calibration, so contradictory per-strip calibration state cannot be observed through Feature 005 public APIs or serialized. Audio calibration is staged by value in fixed-capacity storage and consumed by audio processing only at an audio-block boundary or another named audio-safe point; it performs no heap allocation, flash access, or blocking diagnostics in the audio path. If any affected layer rejects the staged value, the whole publication fails and the active configuration is unchanged. The configuration generation increments only after all affected layers accept the change.
 
 Structural LED changes are enabled state, pixel count, channel order, reversal, and equivalent output-layout changes. They are accepted into the draft only after validation but are not applied mid-frame. Activation is a two-phase operation: first validate and precompute every required fixed-capacity slice, span, and hardware-resource plan without touching live output; then switch at a controlled LED-output reinitialization boundary or controlled restart. At that boundary, rendering is paused, any in-flight LED frame reaches idle/latch completion or times out safely, the `LedOutputManager` is reconfigured, effect spans are rebuilt, and rendering resumes. If hardware reinitialization partially fails and rollback is not possible, LEDs enter a safe-off or prior-safe-output state, active configuration remains reported as the previous configuration, dirty remains true, and diagnostics identify the failed phase and strip/resource.
 
@@ -108,12 +113,12 @@ Payload schema 1 order:
 
 1. payload schema minor flags, currently zero;
 2. six LED strip records;
-3. six effect records using stable ids for every persisted Feature 004 parameter;
-4. one Idle Lighting record;
-5. one audio calibration record;
+3. six effect records using stable ids for every persisted Feature 004 parameter except duplicated Gyver calibration mirror fields;
+4. one Idle Lighting record, including Idle Lighting activity floors and hysteresis;
+5. one global audio calibration record containing the only serialized Gyver VU/spectrum calibration values;
 6. payload CRC input covers exactly these bytes.
 
-The codec is deterministic and host-testable: serializing the same value twice produces identical bytes, and deserializing then serializing a valid payload reproduces the canonical byte sequence.
+The codec is deterministic and host-testable: serializing the same value twice produces identical bytes, and deserializing then serializing a valid payload reproduces the canonical byte sequence. Codec round trips, schema tests, and factory-default tests use only the global audio-calibration fields for Gyver calibration. Any noncanonical duplicated calibration values in input effect mirrors are normalized from the global calibration before comparison and are never emitted into the payload.
 
 ## Record and slot format
 
@@ -143,11 +148,13 @@ At boot and after writes, inspect both slots independently:
 5. payload CRC mismatch -> invalid CRC;
 6. deserialize and validate payload -> valid or invalid payload.
 
-If exactly one slot is valid, use it. If both are valid, select the sequence that is newer using half-range unsigned comparison: `a` is newer than `b` when `a != b` and `uint32_t(a - b) < 0x80000000`. Exact equality is a tie; choose the slot with the deterministic priority A then B and report a duplicate-sequence diagnostic. Host tests cover wrap from `0xFFFFFFFF` to `0` and ambiguous half-range differences.
+If exactly one slot is valid, use it. If both are valid, select the sequence that is newer using half-range unsigned comparison: `a` is newer than `b` when `a != b` and `uint32_t(a - b) < 0x80000000`. Exact equality is a duplicate-sequence tie; choose slot A deterministically and report a duplicate-sequence diagnostic. An exact half-range difference, where `uint32_t(a - b) == 0x80000000`, is ambiguous; choose slot A deterministically, do not claim either sequence is newer, and report `sequence_ambiguous`. In both duplicate and ambiguous A-selected cases, the next write target is slot B. Host tests cover equality, ordinary wrap from `0xFFFFFFFF` to `0`, and exact half-range ambiguity.
 
-## Interrupted-write behavior
+## Write-target and interrupted-write behavior
 
-Interrupted erase of the target slot can destroy only that target slot; the previous committed slot remains valid. Interrupted programming before the commit marker leaves the target uncommitted. Interrupted programming of the commit marker is detected by exact marker validation, header CRC, payload CRC, and payload validation. If both slots are invalid after repeated external interruption, factory defaults are used and the fallback reason reports both slot states.
+The selected valid slot is never erased while preparing its replacement. When one valid selected slot exists, Save targets the other slot. When both slots are valid, Save targets the slot that was not selected as newest; for duplicate-sequence or exact half-range ambiguity cases where slot A is selected deterministically, Save targets slot B. When neither slot is valid, the first attempted write targets slot A and uses initial sequence `0`. Otherwise, the next sequence is `(selected_sequence + 1) mod 2^32`. Factory reset uses the same target-selection and transaction rules; it does not erase both slots.
+
+The old selected slot remains untouched until the target slot is fully erased, programmed, committed, read back, decoded, CRC-checked, and validated. Failure before final verification leaves the old selected slot authoritative. Interrupted erase of the target slot can destroy only that target slot; the previous committed slot remains valid. Interrupted programming before the commit marker leaves the target uncommitted. Interrupted programming of the commit marker is detected by exact marker validation, header CRC, payload CRC, and payload validation. If both slots are invalid after repeated external interruption, factory defaults are used and the fallback reason reports both slot states.
 
 ## Schema-version policy
 
@@ -155,7 +162,7 @@ Schema major version is stored in the record and payload. Feature 005 supports s
 
 ## Factory-default construction
 
-Factory defaults are built from Feature 005 canonical constants, not from mutable runtime state: `board::kStripGpios`; pixel counts 132/174/141/81/96/72; `board::kDefaultPixelsPerMetre`; GRBW order; brightness 16; enabled true; reversed false; six value-copied Gyver VU Gradient configurations with `enabled=true`, `source=stereo_left_right`, Off background, `vu_color_mode=level_position_gradient`, palette Green/Yellow/Orange/Red (`{0,255,0,0}`, `{255,255,0,0}`, `{255,128,0,0}`, `{255,0,0,0}`), `attack_ms=45`, and `release_ms=160`; disabled Idle Lighting with the Feature 004 default Idle values (`startup_idle_enabled=true`, `silence_timeout_ms=10000`, `audio_confirmation_ms=150`, idle colour `{0,0,0,255}`, `idle_brightness_q8=256`, fades 750/1500 ms, all input and strip masks, activity floors 32/32/32, hysteresis 4); and audio calibration defaults `gyver_left_noise_floor=32`, `gyver_right_noise_floor=32`, `gyver_noise_gate_hysteresis=4`, `gyver_spectrum_noise_floor=256`, and `gyver_spectrum_minimum_peak=64`. Temporary diagnostic scene cycling is disabled for normal Release startup.
+Factory defaults are built from Feature 005 canonical constants, not from mutable runtime state: `board::kStripGpios`; pixel counts 132/174/141/81/96/72; physical length `0` micrometres for every strip; density `board::kDefaultPixelsPerMetre`; GRBW order; brightness 16; enabled true; reversed false; six value-copied Gyver VU Gradient configurations with `enabled=true`, `source=stereo_left_right`, Off background, `vu_color_mode=level_position_gradient`, palette Green/Yellow/Orange/Red (`{0,255,0,0}`, `{255,255,0,0}`, `{255,128,0,0}`, `{255,0,0,0}`), `attack_ms=45`, and `release_ms=160`; disabled Idle Lighting with the Feature 004 default Idle values (`startup_idle_enabled=true`, `silence_timeout_ms=10000`, `audio_confirmation_ms=150`, idle colour `{0,0,0,255}`, `idle_brightness_q8=256`, fades 750/1500 ms, all input and strip masks, activity floors 32/32/32, hysteresis 4); and canonical global audio calibration defaults `gyver_left_noise_floor=32`, `gyver_right_noise_floor=32`, `gyver_noise_gate_hysteresis=4`, `gyver_spectrum_noise_floor=256`, and `gyver_spectrum_minimum_peak=64`. Factory physical length remains zero unless an actual measured board or product constant is added later through an approved specification change. Temporary diagnostic scene cycling is disabled for normal Release startup.
 
 ## Boot sequence
 
@@ -163,11 +170,11 @@ Startup order becomes: initialize stdio as currently required; construct factory
 
 ## Controlled flash-save sequence
 
-The save coordinator requests a save from non-real-time application code. It waits until no audio block is ready, prevents new optional rendering, lets any in-flight LED frame reach idle/latch completion or records a bounded timeout, snapshots dropped-block counters, pauses or deliberately masks capture/processing as required by the Pico SDK flash backend, disables unsafe interrupts while executing flash erase/program functions from RAM when required, writes and verifies the target slot, restores interrupts/capture/rendering, and records duration plus deltas in diagnostics. The accepted interruption is bounded and observable; save is never initiated from audio ISR, effect render, frame packing, LED DMA callback, or LED transmission code.
+The save coordinator requests a save from non-real-time application code. It acquires an LED-frame boundary using a compile-time bounded deadline and acquires an audio-safe boundary using a separate compile-time bounded deadline. If either deadline expires, Save aborts before issuing any flash read/erase/program operation for the write transaction, restores rendering/audio operation, leaves persisted storage untouched, leaves active and draft state as they were before the Save request, keeps dirty state unchanged, and records a typed `led_safe_point_timeout` or `audio_safe_point_timeout`. After both safe points are acquired, the coordinator prevents new optional rendering, snapshots dropped-block counters, pauses or deliberately masks capture/processing as required by the Pico SDK flash backend, disables unsafe interrupts while executing flash erase/program functions from RAM when required, writes and verifies the target slot, restores interrupts/capture/rendering, and records duration plus deltas in diagnostics. Diagnostics distinguish LED safe-point wait time, audio safe-point wait time, and actual flash critical-section time. The accepted interruption is bounded and observable; save is never initiated from audio ISR, effect render, frame packing, LED DMA callback, or LED transmission code.
 
 ## Flash layout and overlap checks
 
-The storage layout shall be derived from the actual Pico W flash size and linker image, not from an assumed unsafe address. The Pico build shall reserve the persistent region at link/build time, or provide an equivalent build-time size assertion that fails before flashing when the application image, metadata, and persistent slots cannot coexist. The build shall export linker symbols for application flash start/end and persistent region start/end, or an equivalent generated link-map value checked by firmware and verifier. Compile-time checks require slot size to be a multiple of the RP2040 erase size and programmed chunks to satisfy SDK alignment. Runtime checks require persistent start/end to be within physical flash, sector-aligned, non-overlapping with the loaded image end, and non-overlapping any reserved bootloader/metadata areas. Host fake-flash tests simulate overlap and reject initialization.
+The storage layout shall be derived from the actual Pico W flash size and linker image, not from an assumed unsafe address. The Pico build shall reserve the persistent region at link/build time, or provide an equivalent build-time size assertion that fails before any flashable firmware artifact is produced when the application image, metadata, and persistent slots cannot coexist. Intentionally overlapping configurations are build/link-time negative tests only and must never be flashed to hardware. The build shall export linker symbols for application flash start/end and persistent region start/end, or an equivalent generated link-map value checked by firmware and verifier. Compile-time checks require slot size to be a multiple of the RP2040 erase size and programmed chunks to satisfy SDK alignment. Runtime checks require persistent start/end to be within physical flash, sector-aligned, non-overlapping with the loaded image end, and non-overlapping any reserved bootloader/metadata areas. Host fake-flash tests simulate invalid runtime region descriptors and reject overlap before slot access.
 
 ## Diagnostics
 
@@ -179,7 +186,7 @@ The design reserves two equal slots sized for the maximum schema-1 payload plus 
 
 ## Host-test strategy
 
-Host tests exercise validation, factory defaults, serialization round trips, endian byte expectations, CRC32 known vectors, slot inspection, newest-valid selection, fake-flash writes, corruption, truncation, length mismatch, malicious fields, unsupported schema, both slots invalid, sequence wrap, interrupted erase, interrupted program before and during commit, flash alignment, and flash-overlap rejection. Tests run in the existing five-suite host architecture or in a sixth focused suite only after the task adds it to every GCC/Clang/sanitizer configuration.
+Host tests exercise validation, factory defaults, serialization round trips, endian byte expectations, CRC32 known vectors, canonical Gyver calibration ownership, runtime overlay, serialization without duplicated calibration values, prevention of contradictory calibration state, known and unknown physical metadata, slot inspection, newest-valid selection, exact half-range ambiguity, duplicate sequence, deterministic write-target selection, selected-slot preservation, initial save to slot A, alternating slots, sequence wrap, fake-flash writes, write failure, readback failure, reset failure, corruption, truncation, length mismatch, malicious fields, unsupported schema, both slots invalid, interrupted erase, interrupted program before and during commit, permanently busy LED output, continuously pending audio work, safe-point timeout recovery with proof that no flash operation was issued, flash alignment, build-time negative overlap verification, and runtime fake-backend flash-overlap rejection. Tests run in the existing five-suite host architecture or in a sixth focused suite only after the task adds it to every GCC/Clang/sanitizer configuration.
 
 ## Firmware integration strategy
 

@@ -32,11 +32,11 @@ R005-010. Flash writing shall be initiated only by explicit Save or confirmed fa
 
 R005-011. The persisted profile shall include the complete LED configuration for all six strips.
 
-R005-012. Each strip LED configuration shall include enabled state, pixel count, channel order, reversal, brightness, fixed GPIO identity, and physical metadata for strip length and LED density when these values exist in the model.
+R005-012. Each strip LED configuration shall include enabled state, pixel count, channel order, reversal, brightness, fixed GPIO identity, and physical metadata for strip length and LED density. Pixel count is always the sole operational authority for rendering and transmission; physical length and density are informational metadata only.
 
 R005-013. GPIO assignment shall remain fixed by the board configuration and shall not be user-configurable.
 
-R005-014. Pixel count shall be the authoritative operational value used by rendering and output even when physical length and density metadata are stored.
+R005-014. Pixel count shall be the authoritative operational value used by rendering and output even when physical length and density metadata are stored. Changing physical length or density shall never implicitly change `pixel_count`.
 
 R005-015. The persisted profile shall include each strip's effect configuration.
 
@@ -44,7 +44,7 @@ R005-016. The persisted profile shall include the global Idle Lighting configura
 
 R005-017. Idle Lighting shall remain disabled in factory defaults.
 
-R005-018. The persisted profile shall include audio calibration values and noise-floor values currently required for correct runtime behavior, including Gyver VU left and right noise floors, Gyver VU hysteresis, Gyver spectrum noise floor, Gyver spectrum minimum peak, and Idle Lighting activity floors and hysteresis.
+R005-018. The persisted profile shall include canonical device-level Gyver audio calibration values currently required for correct runtime behavior: Gyver VU left and right noise floors, Gyver VU hysteresis, Gyver spectrum noise floor, and Gyver spectrum minimum peak. These values shall be owned only by the global audio-calibration record, serialized exactly once, excluded from per-strip persisted effect records, overlaid into applicable Gyver runtime effect configurations during publication, and used as the only source for dirty-state comparison, equality, factory defaults, codec round trips, and schema tests. Conflicting duplicated values from runtime `effects::StripEffectConfig` instances shall be normalized from the global calibration and shall not enter the persisted payload. Idle Lighting activity floors and hysteresis shall remain owned by `effects::IdleLightingConfig` and shall not be duplicated in `AudioCalibrationConfig`.
 
 R005-019. Wi-Fi credentials and all networking configuration shall be excluded and deferred to Feature 006.
 
@@ -58,7 +58,7 @@ R005-022. Factory LED reversal shall be false for every strip.
 
 R005-023. Factory LED brightness shall be 16 out of 255 for every strip.
 
-R005-024. Factory physical LED density shall default to 60 pixels per metre for every strip unless a more specific stored value is valid.
+R005-024. Factory physical LED density shall default to `board::kDefaultPixelsPerMetre`, currently 60 pixels per metre, for every strip. Factory physical length shall be `0` micrometres, meaning unknown or not measured, unless an actual measured board or product constant is added later through an approved specification change. Persistent loading overrides factory defaults only after a valid record has been selected.
 
 R005-025. The current six independent Gyver VU effect configurations shall remain the factory effect defaults.
 
@@ -96,7 +96,7 @@ R005-039. Validation shall reject unsupported effect identifiers, incompatible e
 
 R005-040. Validation shall reject Idle Lighting values outside Feature 004 Idle bounds.
 
-R005-041. Validation shall reject unsafe audio calibration and noise-floor values outside explicitly documented ranges.
+R005-041. Validation shall reject unsafe audio calibration and noise-floor values outside explicitly documented ranges. Validation shall allow `length_micrometres == 0` as unknown physical length, shall accept density in the explicit implementation range 1..1000 pixels per metre, and shall reject zero density in schema 1; unknown density is represented by the absence of a later optional field, not by zero. Arithmetic consistency checks shall not reject a valid authoritative pixel count merely because optional physical metadata is unknown or approximate.
 
 R005-042. Validation shall check serialized lengths and all integer arithmetic for overflow before allocating fixed buffers, copying bytes, or accepting a record.
 
@@ -104,7 +104,7 @@ R005-043. Validation shall reject unsupported schema versions and shall not inte
 
 R005-044. Validation shall check persistent slot placement, flash erase/program alignment, and persistent-region size.
 
-R005-045. Firmware shall provide compile-time and runtime checks that the persistent region does not overlap the application image or any reserved flash area.
+R005-045. Firmware shall provide compile-time and runtime checks that the persistent region does not overlap the application image or any reserved flash area. An intentionally overlapping configuration shall be a build/link-time negative test that fails before any flashable firmware artifact is produced and shall never be flashed to hardware.
 
 ### Persistent format and slots
 
@@ -130,33 +130,35 @@ R005-055. If one slot is invalid and the other is valid, loading shall use the v
 
 R005-056. If both slots are invalid, missing, erased, unsupported, or corrupt, loading shall use factory defaults and expose the fallback reason through bounded diagnostics.
 
-R005-057. Sequence comparison shall define wrap behavior and shall be host-tested at wrap boundaries.
+R005-057. Sequence comparison shall define wrap behavior and shall be host-tested at wrap boundaries. For two valid slots, the ordinary newer comparison shall use half-range unsigned arithmetic; exact sequence equality shall select slot A deterministically and report duplicate sequence; an exact `0x80000000` difference shall be ambiguous, shall select slot A deterministically without claiming either sequence is newer, shall report `sequence_ambiguous`, and shall target slot B for the next write.
+
+R005-058. Save and factory reset shall use deterministic write-target selection that never erases the selected valid slot while preparing its replacement. When one valid selected slot exists, the target shall be the other slot; when both slots are valid, the target shall be the non-selected slot; when neither slot is valid, the first attempted write shall target slot A with initial sequence `0`; otherwise the next sequence shall be `(selected_sequence + 1) mod 2^32`. The old selected slot shall remain authoritative until the target slot has been fully programmed, committed, read back, decoded, CRC-checked, and validated. Failure before final verification shall leave the old selected slot authoritative. Factory reset shall use the same transaction and shall not erase both slots.
 
 ### Boot, save, and diagnostics
 
-R005-058. Normal Release startup shall load the newest valid supported configuration or factory defaults before enabling normal rendering.
+R005-059. Normal Release startup shall load the newest valid supported configuration or factory defaults before enabling normal rendering.
 
-R005-059. The controlled save sequence shall reach an LED-frame boundary before erase/program operations begin.
+R005-060. The controlled save sequence shall reach an LED-frame boundary before erase/program operations begin, using a finite compile-time bounded deadline. If the LED-safe boundary cannot be acquired before that deadline, Save shall abort before any flash erase/program operation, restore runtime operation, leave active/draft/persisted states unchanged except bounded diagnostics, and report a typed LED-safe-point timeout.
 
-R005-060. The controlled save sequence shall prevent unsafe concurrent execution from flash during flash erase/program operations.
+R005-061. The controlled save sequence shall prevent unsafe concurrent execution from flash during flash erase/program operations.
 
-R005-061. The controlled save sequence shall handle audio capture and processing deliberately, either by pausing and accounting for dropped work or by proving that the selected flash backend is safe for the active capture mode.
+R005-062. The controlled save sequence shall handle audio capture and processing deliberately, either by pausing and accounting for dropped work or by proving that the selected flash backend is safe for the active capture mode. Audio-safe boundary acquisition shall use a finite compile-time bounded deadline; timeout shall abort before any flash erase/program operation, restore runtime operation, leave active/draft/persisted states unchanged except bounded diagnostics, and report a typed audio-safe-point timeout.
 
-R005-062. Runtime operation shall be restored after save or reset whether the storage operation succeeds or fails, unless a pre-existing unrecoverable hardware fault prevents restoration.
+R005-063. Runtime operation shall be restored after save or reset whether the storage operation succeeds or fails, unless a pre-existing unrecoverable hardware fault prevents restoration.
 
-R005-063. A short, bounded real-time interruption during flash erase/programming is accepted on RP2040.
+R005-064. A short, bounded real-time interruption during flash erase/programming is accepted on RP2040.
 
-R005-064. Save duration and relevant dropped-frame or interrupted-processing information shall be observable through bounded diagnostics.
+R005-065. Save duration and relevant dropped-frame or interrupted-processing information shall be observable through bounded diagnostics. The measured duration shall distinguish LED/audio safe-point wait time from actual flash critical-section time.
 
-R005-065. Fallback reasons, slot validity summaries, last save status, whether active differs from persisted, last reset status, schema status, and flash-overlap failures shall be observable through bounded diagnostics.
+R005-066. Fallback reasons, slot validity summaries, last save status, whether active differs from persisted, last reset status, schema status, and flash-overlap failures shall be observable through bounded diagnostics.
 
 ### Verification
 
-R005-066. Host tests shall cover positive, boundary, corruption, truncation, sequence-wrap, unsupported-schema, both-slots-invalid, interrupted-erase, interrupted-program, CRC mismatch, length mismatch, malicious-field, and flash-overlap cases.
+R005-067. Host tests shall cover positive, boundary, corruption, truncation, sequence-wrap, exact half-range ambiguity, duplicate sequence, unsupported-schema, both-slots-invalid, interrupted-erase, interrupted-program, CRC mismatch, length mismatch, malicious-field, canonical Gyver calibration ownership, runtime calibration overlay, serialization without duplicated calibration values, prevention of contradictory calibration state, known/unknown physical metadata, deterministic write-target selection, preservation of the selected slot, initial save, alternating slots, write failure, readback failure, reset failure, bounded LED/audio safe-point timeout recovery, proof that no flash operation occurs before safe points, and flash-overlap cases.
 
-R005-067. Feature 005 implementation tasks shall leave the repository compilable after each milestone.
+R005-068. Feature 005 implementation tasks shall leave the repository compilable after each milestone.
 
-R005-068. Final software verification shall run the authoritative clean verifier command from `AGENTS.md`.
+R005-069. Final software verification shall run the authoritative clean verifier command from `AGENTS.md`.
 
 ## Non-goals
 
