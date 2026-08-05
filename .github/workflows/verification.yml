@@ -1,0 +1,80 @@
+name: Permanent verification
+
+on:
+  pull_request:
+  push:
+    branches: [main, development]
+
+permissions:
+  contents: read
+
+env:
+  PICO_SDK_PATH: /opt/pico-sdk-2.3.0
+  VERIFY_OUTPUT_DIR: /tmp/pico-music-lights-verification
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: false
+      - name: Install host build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential clang cmake ninja-build python3 git ripgrep libusb-1.0-0-dev pkg-config
+      - name: Install Pico SDK 2.3.0
+        run: |
+          sudo git clone --no-checkout https://github.com/raspberrypi/pico-sdk.git "$PICO_SDK_PATH"
+          sudo git -C "$PICO_SDK_PATH" checkout 98a542c1a62fb549ffb5d66a3e5892b06276b670
+          sudo git -C "$PICO_SDK_PATH" submodule update --init --recursive --depth 1
+          test "$(git -C "$PICO_SDK_PATH" rev-parse HEAD)" = 98a542c1a62fb549ffb5d66a3e5892b06276b670
+      - name: Install Arm GNU Toolchain 15.2.Rel1
+        run: |
+          curl --fail --location --retry 3 \
+            https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz \
+            -o /tmp/arm-toolchain.tar.xz
+          sudo mkdir -p /opt/arm-gnu
+          sudo tar -xJf /tmp/arm-toolchain.tar.xz -C /opt/arm-gnu --strip-components=1
+          echo /opt/arm-gnu/bin >> "$GITHUB_PATH"
+      - name: Build and install picotool 2.3.0
+        run: |
+          git clone --no-checkout https://github.com/raspberrypi/picotool.git /tmp/picotool
+          git -C /tmp/picotool checkout 6f6458d792b93685a11423b244a585eaa99eafcf
+          cmake -S /tmp/picotool -B /tmp/picotool-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DPICOTOOL_FLAT_INSTALL=1 \
+            -DPICO_SDK_PATH="$PICO_SDK_PATH"
+          cmake --build /tmp/picotool-build
+          sudo cmake --install /tmp/picotool-build --prefix /opt/picotool-2.3.0
+          echo /opt/picotool-2.3.0/picotool >> "$GITHUB_PATH"
+      - name: Run authoritative verification
+        run: tools/verify_all.sh
+      - name: Upload verification diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pico-music-lights-verification-diagnostics
+          if-no-files-found: warn
+          path: |
+            /tmp/pico-music-lights-verification/verification-summary.txt
+            /tmp/pico-music-lights-verification/host-*.log
+            /tmp/pico-music-lights-verification/firmware.log
+            /tmp/pico-music-lights-verification/firmware/CMakeCache.txt
+            /tmp/pico-music-lights-verification/firmware/CMakeFiles/CMakeConfigureLog.yaml
+            /tmp/pico-music-lights-verification/firmware/CMakeFiles/CMakeOutput.log
+            /tmp/pico-music-lights-verification/firmware-size-report.txt
+      - name: Upload successful firmware artifacts
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pico-music-lights-firmware-artifacts
+          if-no-files-found: error
+          path: |
+            /tmp/pico-music-lights-verification/firmware/pico_music_lights.elf
+            /tmp/pico-music-lights-verification/firmware/pico_music_lights.uf2
+            /tmp/pico-music-lights-verification/firmware/pico_music_lights.bin
+            /tmp/pico-music-lights-verification/firmware/pico_music_lights.hex
+            /tmp/pico-music-lights-verification/firmware/pico_music_lights.elf.map
+            /tmp/pico-music-lights-verification/firmware/pico_music_lights.dis
