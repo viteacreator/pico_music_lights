@@ -26,7 +26,7 @@ Each procedure below requires the owner to record: build identifier, build type,
 
 5. Interrupted-payload-program validation. Preconditions: one previous valid slot. Action: use a diagnostic build with a named `during_payload_program` injection pause, then remove power. Expected diagnostics after reboot: previous valid slot selected, target slot uncommitted/corrupt, payload CRC or commit invalid. Expected LEDs: previous profile is active.
 
-6. Interrupted-commit-marker validation. Preconditions: one previous valid slot. Action: use a diagnostic build with a named `during_commit_marker_program` injection pause, then remove power. Expected diagnostics after reboot: either the new slot is fully valid and selected or the previous valid slot is selected; any partial marker is rejected. Expected LEDs: selected profile matches diagnostics.
+6. Interrupted-commit-page validation. Preconditions: one previous valid slot. Action: use a diagnostic build with a named `during_commit_page_program` injection pause, then remove power. Expected diagnostics after reboot: either the new slot is fully valid and selected or the previous valid slot is selected; any partial or malformed commit page is rejected. Expected LEDs: selected profile matches diagnostics.
 
 7. Factory-reset validation. Preconditions: a valid non-default profile is active and persisted. Action: perform the explicit confirmation mechanism. Expected diagnostics: reset confirmed, factory defaults activated, reset record committed and verified, dirty false. Expected LEDs: factory layout and factory Gyver VU defaults are active. After power-cycle, expected diagnostics still show factory defaults loaded from a valid persisted record or equivalent reset source.
 
