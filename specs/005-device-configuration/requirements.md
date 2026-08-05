@@ -30,37 +30,37 @@ R005-010. Flash writing shall be initiated only by explicit Save or confirmed fa
 
 ### Persisted content
 
-R005-011. The persisted profile shall include the complete LED configuration for all six strips.
+R005-011. The persisted profile shall include the complete LED-channel configuration for all eight persistent LED channels.
 
-R005-012. Each strip LED configuration shall include enabled state, pixel count, channel order, reversal, brightness, fixed GPIO identity, and physical metadata for strip length and LED density. Pixel count is always the sole operational authority for rendering and transmission; physical length and density are informational metadata only.
+R005-012. Each LED-channel configuration shall include enabled state, pixel count, channel order, reversal, brightness, and physical metadata for strip length and LED density. It shall not include GPIO. Pixel count is always the sole operational authority for rendering and transmission; physical length and density are informational metadata only.
 
-R005-013. GPIO assignment shall remain fixed by the board configuration and shall not be user-configurable.
+R005-013. GPIO assignment shall remain fixed by board configuration, mapped from stable logical channel index, and shall not be user-configurable or serialized. Dirty-state comparison shall not compare GPIO, loading shall not read GPIO from flash, and future GPIO assignments for channels 6 and 7 shall be introduced only in board configuration after the hardware is defined.
 
 R005-014. Pixel count shall be the authoritative operational value used by rendering and output even when physical length and density metadata are stored. Changing physical length or density shall never implicitly change `pixel_count`.
 
-R005-015. The persisted profile shall include each strip's effect configuration.
+R005-015. The persisted profile shall include eight effect records, one per persistent logical LED channel. Current runtime adapters shall publish only board-supported channels to the current six-channel LED driver and EffectEngine; the specification shall not claim that current runtime code already supports eight active channels.
 
 R005-016. The persisted profile shall include the global Idle Lighting configuration.
 
 R005-017. Idle Lighting shall remain disabled in factory defaults.
 
-R005-018. The persisted profile shall include canonical device-level Gyver audio calibration values currently required for correct runtime behavior: Gyver VU left and right noise floors, Gyver VU hysteresis, Gyver spectrum noise floor, and Gyver spectrum minimum peak. These values shall be owned only by the global audio-calibration record, serialized exactly once, excluded from per-strip persisted effect records, overlaid into applicable Gyver runtime effect configurations during publication, and used as the only source for dirty-state comparison, equality, factory defaults, codec round trips, and schema tests. Conflicting duplicated values from runtime `effects::StripEffectConfig` instances shall be normalized from the global calibration and shall not enter the persisted payload. Idle Lighting activity floors and hysteresis shall remain owned by `effects::IdleLightingConfig` and shall not be duplicated in `AudioCalibrationConfig`.
+R005-018. The persisted profile shall include canonical device-level Gyver audio calibration values currently required for correct runtime behavior: Gyver VU left and right noise floors, Gyver VU hysteresis, Gyver spectrum noise floor, and Gyver spectrum minimum peak. These values shall be owned only by the global audio-calibration record, serialized exactly once, excluded from per-channel persisted effect records, overlaid into applicable Gyver runtime effect configurations during publication, and used as the only source for dirty-state comparison, equality, factory defaults, codec round trips, and schema tests. Conflicting duplicated values from runtime `effects::StripEffectConfig` instances shall be normalized from the global calibration and shall not enter the persisted payload. Idle Lighting activity floors and hysteresis shall remain owned by `effects::IdleLightingConfig` and shall not be duplicated in `AudioCalibrationConfig`.
 
 R005-019. Wi-Fi credentials and all networking configuration shall be excluded and deferred to Feature 006.
 
 ### Factory defaults
 
-R005-020. The factory LED layout shall be six enabled strips on GP2, GP3, GP4, GP5, GP6, and GP7 with pixel counts 132, 174, 141, 81, 96, and 72 respectively.
+R005-020. The persistent configuration shall define `kMaximumLedChannelCount = 8`; logical channel index shall be the stable identity. The current board supports channels 0 through 5, mapped by board configuration to GP2, GP3, GP4, GP5, GP6, and GP7 with factory pixel counts 132, 174, 141, 81, 96, and 72 respectively. Channels 6 and 7 are reserved for future hardware support and have no stored GPIO.
 
-R005-021. Factory LED channel order shall be GRBW for every strip.
+R005-021. Factory LED channel order shall be GRBW for current channels 0 through 5; reserved channels 6 and 7 shall store a harmless supported default channel order while disabled.
 
-R005-022. Factory LED reversal shall be false for every strip.
+R005-022. Factory LED reversal shall be false for all eight persistent channels.
 
-R005-023. Factory LED brightness shall be 16 out of 255 for every strip.
+R005-023. Factory LED brightness shall be 16 out of 255 for all eight persistent channels unless a later approved specification chooses another harmless stored default for disabled reserved channels.
 
-R005-024. Factory physical LED density shall default to `board::kDefaultPixelsPerMetre`, currently 60 pixels per metre, for every strip. Factory physical length shall be `0` micrometres, meaning unknown or not measured, unless an actual measured board or product constant is added later through an approved specification change. Persistent loading overrides factory defaults only after a valid record has been selected.
+R005-024. Factory physical density shall be `board::kDefaultPixelsPerMetre`, currently 60 pixels per metre, for currently installed channels 0 through 5. Factory physical length shall be `0` millimetres for all channels, meaning unknown or not measured, unless an actual measured board or product constant is added later through an approved specification change. Reserved channels 6 and 7 shall store unknown length and unknown density. Persistent loading overrides factory defaults only after a valid record has been selected.
 
-R005-025. The current six independent Gyver VU effect configurations shall remain the factory effect defaults.
+R005-025. The current six independent Gyver VU effect configurations shall remain the factory effect defaults for channels 0 through 5. Reserved channels 6 and 7 shall default to disabled, zero pixels, Effect Off, brightness 16, not reversed, unknown physical length, and unknown density.
 
 R005-026. Factory defaults shall not auto-run temporary diagnostic scenes during normal Release startup.
 
@@ -82,13 +82,13 @@ R005-033. Configuration shared across runtime layers shall be transferred by bou
 
 ### Validation
 
-R005-034. Validation shall reject any configuration whose strip count differs from six.
+R005-034. Validation shall require every logical channel index to be within the fixed eight-channel persistent capacity. It shall reject enabling a channel that is not supported by the current board configuration. Future board support may increase the supported channel count from six to eight without changing the Feature 005 persistent schema or requiring migration solely for the planned channels.
 
-R005-035. Validation shall reject per-strip pixel counts outside the configured limits, including zero for an enabled strip and counts above the board maximum.
+R005-035. Validation shall reject per-channel pixel counts outside the `uint16_t` representation, including zero for an enabled board-supported channel. Disabled channels may store zero or a retained valid nonzero pixel count.
 
-R005-036. Validation shall reject total enabled pixels above the configured total-pixel limit. Disabled strips may store zero pixels or a retained valid nonzero pixel count, but disabled-strip pixels shall not contribute to the total enabled-pixel limit and disabled strips shall produce LED-off/no-transmission behavior until re-enabled through a structural activation boundary.
+R005-036. Validation shall reject total enabled board-supported pixels above the current board/runtime total-pixel capability. Total calculations shall use at least `uint32_t`. The persistent codec can represent eight channels at each channel's `uint16_t` maximum; board total-pixel capability is not part of the persistent schema, and changing that capability shall not require changing the persistent record format. Disabled and unsupported channels shall not contribute to the total and shall produce LED-off/no-transmission behavior.
 
-R005-037. Validation shall reject invalid or duplicate hardware mappings and any GPIO mapping that differs from the fixed board mapping.
+R005-037. Validation shall reject any persisted or draft attempt to provide hardware mappings, because GPIO is not a persisted field. Runtime adapters shall map each enabled board-supported logical channel to board configuration and shall consume only board-supported channels.
 
 R005-038. Validation shall reject brightness values outside 0..255 and unsupported channel-order enumeration values.
 
@@ -96,7 +96,7 @@ R005-039. Validation shall reject unsupported effect identifiers, incompatible e
 
 R005-040. Validation shall reject Idle Lighting values outside Feature 004 Idle bounds.
 
-R005-041. Validation shall reject unsafe audio calibration and noise-floor values outside explicitly documented ranges. Validation shall allow `length_micrometres == 0` as unknown physical length, shall accept density in the explicit implementation range 1..1000 pixels per metre, and shall reject zero density in schema 1; unknown density is represented by the absence of a later optional field, not by zero. Arithmetic consistency checks shall not reject a valid authoritative pixel count merely because optional physical metadata is unknown or approximate.
+R005-041. Validation shall reject unsafe audio calibration and noise-floor values outside explicitly documented ranges. Validation shall allow `length_mm == 0` as unknown physical length, shall use `uint16_t length_mm` with maximum representable length 65,535 mm, shall not use micrometre precision, and shall treat millimetre precision as sufficient. Validation shall accept `density_pixels_per_metre == 0` as unknown and nonzero density values in the explicit implementation range 1..1000 pixels per metre. Arithmetic consistency checks shall not reject a valid authoritative pixel count merely because optional physical metadata is unknown or approximate.
 
 R005-042. Validation shall check serialized lengths and all integer arithmetic for overflow before allocating fixed buffers, copying bytes, or accepting a record.
 
@@ -154,7 +154,7 @@ R005-066. Fallback reasons, slot validity summaries, last save status, whether a
 
 ### Verification
 
-R005-067. Host tests shall cover positive, boundary, corruption, truncation, sequence-wrap, exact half-range ambiguity, duplicate sequence, unsupported-schema, both-slots-invalid, interrupted-erase, interrupted-program, CRC mismatch, length mismatch, malicious-field, canonical Gyver calibration ownership, runtime calibration overlay, serialization without duplicated calibration values, prevention of contradictory calibration state, known/unknown physical metadata, deterministic write-target selection, preservation of the selected slot, initial save, alternating slots, write failure, readback failure, reset failure, bounded LED/audio safe-point timeout recovery, proof that no flash operation occurs before safe points, and flash-overlap cases.
+R005-067. Host tests shall cover positive, boundary, corruption, truncation, sequence-wrap, exact half-range ambiguity, duplicate sequence, unsupported-schema, both-slots-invalid, interrupted-erase, interrupted-program, CRC mismatch, length mismatch, malicious-field, eight-channel schema records, current six-channel board capability, reserved channels 6 and 7 disabled, rejection of unsupported enabled channels, absence of persisted GPIO, current runtime adapters consuming only board-supported channels, total-pixel capability outside the schema, canonical Gyver calibration ownership, runtime calibration overlay, serialization without duplicated calibration values, prevention of contradictory calibration state, known/unknown millimetre physical metadata, deterministic write-target selection, preservation of the selected slot, initial save, alternating slots, write failure, readback failure, reset failure, bounded LED/audio safe-point timeout recovery, proof that no flash operation occurs before safe points, and flash-overlap cases.
 
 R005-068. Feature 005 implementation tasks shall leave the repository compilable after each milestone.
 

@@ -16,7 +16,7 @@ Each procedure below requires the owner to record: build identifier, build type,
 
 ## Hardware-only procedures
 
-1. Boot-load validation. Preconditions: Release build; both persistent slots erased by a known flashing or diagnostic erase step. Action: boot the device. Expected diagnostics: boot source `factory_defaults`, both slots erased or invalid, dirty false, no save in progress. Expected LEDs: six-strip factory Gyver VU output using the factory layout after audio starts; no automatic temporary diagnostic-scene cycling.
+1. Boot-load validation. Preconditions: Release build; both persistent slots erased by a known flashing or diagnostic erase step. Action: boot the device. Expected diagnostics: boot source `factory_defaults`, both slots erased or invalid, dirty false, no save in progress. Expected LEDs: current six installed channels show factory Gyver VU output using the factory layout after audio starts; reserved channels 6 and 7 remain disabled in diagnostics; no automatic temporary diagnostic-scene cycling.
 
 2. Persisted-load validation. Preconditions: one valid saved profile with a visible non-structural difference such as lower brightness or a changed Gyver colour palette. Action: power-cycle. Expected diagnostics: selected newest valid slot and sequence, boot source `persistent`, dirty false. Expected LEDs: rendering matches the saved profile, not factory defaults.
 
@@ -38,6 +38,6 @@ Each procedure below requires the owner to record: build identifier, build type,
 
 11. Audio-calibration persistence validation. Preconditions: quiet input suitable for safe calibration. Action: perform a safe noise-floor calibration through the approved explicit mechanism, Save, then power-cycle. Expected diagnostics: saved Gyver VU floors/hysteresis and spectrum thresholds reload from persistent storage. Expected LEDs: quiet-input Gyver VU gates remain closed according to saved floors, and ordinary music opens the gates.
 
-12. LED factory-layout validation. Preconditions: confirmed factory reset. Action: inspect startup diagnostics and visible output. Expected diagnostics: strips 1–6 use GP2–GP7, 132/174/141/81/96/72 pixels, GRBW order, all enabled, no reversal, brightness 16/255. Expected LEDs: every physical strip responds on its assigned GPIO and no disabled or reversed strip is reported.
+12. LED factory-layout validation. Preconditions: confirmed factory reset. Action: inspect startup diagnostics and visible output. Expected diagnostics: logical channels 0–5 map through board configuration to GP2–GP7, use 132/174/141/81/96/72 pixels, GRBW order, enabled, no reversal, brightness 16/255, density 60, and unknown length; logical channels 6–7 are disabled with zero pixels, Effect Off, unknown length, unknown density, and no stored GPIO. Expected LEDs: every currently installed physical strip responds on its board-assigned GPIO and no reserved channel is driven.
 
 Physical validation is complete only after the owner reports observed results for the relevant procedures. Compilation or host tests do not prove physical flash timing, power-interruption behavior, LED electrical behavior, or startup observations.

@@ -25,22 +25,24 @@ The implementation shall define fixed-capacity C++17 interfaces equivalent to:
 
 ```cpp
 namespace config {
-constexpr std::size_t kDeviceStripCount = 6;
-constexpr uint16_t kMaximumPixelsPerStrip = board::kMaxPixelsPerStrip;
-constexpr uint16_t kMaximumTotalPixels = board::kMaxConfiguredPixels;
+constexpr std::size_t kMaximumLedChannelCount = 8;
+constexpr std::size_t kCurrentBoardSupportedLedChannelCount = board::kStripCount;
+constexpr uint16_t kMaximumPixelsPerChannel = 65535u;
+// Current board/runtime total-pixel capability is validated outside the
+// persistent schema, for example against board::kMaxConfiguredPixels.
 constexpr uint32_t kCurrentSchemaVersion = 1;
 
 struct PhysicalStripMetadata {
-    // Informational only. Zero length means unknown or not measured.
-    uint32_t length_micrometres;
-    // Schema 1 stores 1..1000 pixels per metre; zero is invalid.
+    // Informational only. Zero means unknown or not measured.
+    // Millimetre precision is sufficient; micrometre precision is not used.
+    uint16_t length_mm;
+    // Zero means unknown. Nonzero schema-1 values are 1..1000 pixels/m.
     uint16_t density_pixels_per_metre;
 };
 
-struct LedStripDeviceConfig {
+struct LedChannelDeviceConfig {
     bool enabled;
     uint16_t pixel_count;
-    uint32_t gpio;
     uint8_t brightness;
     ChannelOrder channel_order;
     bool reversed;
@@ -58,21 +60,21 @@ struct AudioCalibrationConfig {
 // Canonical device-level owner for Gyver calibration. These values are
 // serialized exactly once in the global audio-calibration record. The same
 // fields currently present in effects::StripEffectConfig are runtime mirrors
-// only and are excluded from persisted per-strip effect records. Idle Lighting
+// only and are excluded from persisted per-channel effect records. Idle Lighting
 // activity floors and hysteresis remain owned by effects::IdleLightingConfig
 // and are serialized in the Idle Lighting record: left_activity_floor,
 // right_activity_floor, aux_activity_floor, and activity_hysteresis.
 
 struct DeviceConfiguration {
-    std::array<LedStripDeviceConfig, kDeviceStripCount> strips;
-    std::array<effects::StripEffectConfig, kDeviceStripCount> effects;
+    std::array<LedChannelDeviceConfig, kMaximumLedChannelCount> led_channels;
+    std::array<effects::StripEffectConfig, kMaximumLedChannelCount> effects;
     effects::IdleLightingConfig idle_lighting;
     AudioCalibrationConfig audio_calibration;
 };
 }
 ```
 
-Result types shall be bounded enums with detail fields such as failing section, strip index, field id, slot id, and fallback reason. Diagnostics store only the latest bounded summaries and counters, not unbounded logs. Save coordination shall expose compile-time constants for LED-safe-point and audio-safe-point deadlines so timeout paths are deterministic and host-testable.
+Result types shall be bounded enums with detail fields such as failing section, logical channel index, field id, slot id, and fallback reason. Diagnostics store only the latest bounded summaries and counters, not unbounded logs. Save coordination shall expose compile-time constants for LED-safe-point and audio-safe-point deadlines so timeout paths are deterministic and host-testable. Logical channel index, not GPIO, is the stable persisted identity; GPIO is resolved only through board configuration.
 
 ## Configuration state ownership
 
@@ -85,15 +87,15 @@ Dirty state is true when the draft differs from the last persisted configuration
 
 ## Validation flow
 
-Field preview validation runs first and rejects invalid enum values, incompatible effect/source pairs, out-of-range effect parameters, brightness outside 0..255, Idle bounds, and safe audio-calibration bounds. Whole-configuration validation then checks six-strip invariants, fixed GP2–GP7 mapping, duplicate/invalid mappings, enabled-strip pixel counts, stored disabled-strip pixel counts, total enabled pixel count, physical metadata ranges, serialization-size limits, and all integer overflow risks. A disabled strip may store `pixel_count == 0` or retain a valid nonzero pixel count up to the per-strip maximum; disabled strips do not contribute to the total enabled-pixel limit, are rendered LED-off, and are not transmitted until re-enabled through a structural activation boundary. `pixel_count` is the sole operational rendering/transmission authority. `length_micrometres` and `density_pixels_per_metre` are informational only; changing either never recalculates or mutates `pixel_count`. `length_micrometres == 0` means unknown or not measured and is valid. Schema 1 accepts density 1..1000 pixels per metre and rejects zero density. Approximate or unknown physical metadata must not make validation reject an otherwise valid authoritative pixel count.
+Field preview validation runs first and rejects invalid enum values, incompatible effect/source pairs, out-of-range effect parameters, brightness outside 0..255, Idle bounds, and safe audio-calibration bounds. Whole-configuration validation then checks the fixed eight-record channel capacity, current board-supported channel count, enabled-channel support, enabled-channel pixel counts, disabled-channel stored pixel counts, current board/runtime total enabled pixel capability, physical metadata ranges, serialization-size limits, and all integer overflow risks. A disabled channel may store `pixel_count == 0` or retain a valid nonzero `uint16_t` pixel count; disabled and unsupported channels do not contribute to the current total enabled-pixel limit, are rendered LED-off, and are not transmitted until supported and enabled through a structural activation boundary. Unsupported board channels, currently logical channels 6 and 7, must remain disabled. Runtime adapters publish only board-supported logical channels, currently channels 0..5, to the six-channel LED driver and EffectEngine. Future board support may raise the board-supported channel count up to the fixed eight-channel persistent capacity without a schema migration solely for those planned channels. `pixel_count` is the sole operational rendering/transmission authority. `length_mm` and `density_pixels_per_metre` are informational only; changing either never recalculates or mutates `pixel_count`. `length_mm == 0` means unknown or not measured and is valid; the maximum representable length is 65,535 mm. Millimetre precision is sufficient and micrometre precision is not used. `density_pixels_per_metre == 0` means unknown; nonzero schema-1 density values are 1..1000 pixels per metre. Approximate or unknown physical metadata must not make validation reject an otherwise valid authoritative pixel count. GPIO is not present in the persisted model and is not loaded, serialized, validated as a stored value, or compared for dirty state.
 
 Persistent validation additionally checks schema version, payload length, CRC32, commit marker, slot alignment, erase/program alignment, slot bounds, and application-image overlap. Future schema versions are classified as unsupported and are never interpreted as current payloads.
 
 ## Preview and activation flow
 
-Previewable non-structural changes are effects, colours, visual parameters, strip brightness, Idle Lighting settings, and safe audio calibration. Effect and Idle changes may be atomically published at the existing render boundary: the service validates the draft subset and stages effect and Idle configs through their existing staged APIs. Before staging any applicable Gyver runtime effect configuration, a configuration adapter overlays `DeviceConfiguration::audio_calibration` into the runtime mirror fields currently present in `effects::StripEffectConfig`. Reading active or draft configuration normalizes those mirrored fields from the canonical global calibration, so contradictory per-strip calibration state cannot be observed through Feature 005 public APIs or serialized. Audio calibration is staged by value in fixed-capacity storage and consumed by audio processing only at an audio-block boundary or another named audio-safe point; it performs no heap allocation, flash access, or blocking diagnostics in the audio path. If any affected layer rejects the staged value, the whole publication fails and the active configuration is unchanged. The configuration generation increments only after all affected layers accept the change.
+Previewable non-structural changes are effects, colours, visual parameters, strip brightness, Idle Lighting settings, and safe audio calibration. Effect and Idle changes may be atomically published at the existing render boundary: the service validates the draft subset and stages effect and Idle configs through their existing staged APIs. Before staging any applicable Gyver runtime effect configuration, a configuration adapter overlays `DeviceConfiguration::audio_calibration` into the runtime mirror fields currently present in `effects::StripEffectConfig`. Reading active or draft configuration normalizes those mirrored fields from the canonical global calibration, so contradictory per-channel calibration state cannot be observed through Feature 005 public APIs or serialized. Audio calibration is staged by value in fixed-capacity storage and consumed by audio processing only at an audio-block boundary or another named audio-safe point; it performs no heap allocation, flash access, or blocking diagnostics in the audio path. If any affected layer rejects the staged value, the whole publication fails and the active configuration is unchanged. The configuration generation increments only after all affected layers accept the change.
 
-Structural LED changes are enabled state, pixel count, channel order, reversal, and equivalent output-layout changes. They are accepted into the draft only after validation but are not applied mid-frame. Activation is a two-phase operation: first validate and precompute every required fixed-capacity slice, span, and hardware-resource plan without touching live output; then switch at a controlled LED-output reinitialization boundary or controlled restart. At that boundary, rendering is paused, any in-flight LED frame reaches idle/latch completion or times out safely, the `LedOutputManager` is reconfigured, effect spans are rebuilt, and rendering resumes. If hardware reinitialization partially fails and rollback is not possible, LEDs enter a safe-off or prior-safe-output state, active configuration remains reported as the previous configuration, dirty remains true, and diagnostics identify the failed phase and strip/resource.
+Structural LED changes are enabled state, pixel count, channel order, reversal, and equivalent output-layout changes. They are accepted into the draft only after validation but are not applied mid-frame. Activation is a two-phase operation: first validate and precompute every required fixed-capacity slice, span, and hardware-resource plan without touching live output; then switch at a controlled LED-output reinitialization boundary or controlled restart. At that boundary, rendering is paused, any in-flight LED frame reaches idle/latch completion or times out safely, the `LedOutputManager` is reconfigured, effect spans are rebuilt, and rendering resumes. If hardware reinitialization partially fails and rollback is not possible, LEDs enter a safe-off or prior-safe-output state, active configuration remains reported as the previous configuration, dirty remains true, and diagnostics identify the failed phase and channel/resource.
 
 Publication is all-or-nothing. If any layer rejects a validated publication, no new active configuration is reported; diagnostics record the layer and reason, and the draft remains available for correction or discard.
 
@@ -112,13 +114,13 @@ All multibyte fields are little-endian unsigned integers. Boolean fields are one
 Payload schema 1 order:
 
 1. payload schema minor flags, currently zero;
-2. six LED strip records;
-3. six effect records using stable ids for every persisted Feature 004 parameter except duplicated Gyver calibration mirror fields;
+2. eight LED-channel records keyed by logical channel index, without GPIO fields;
+3. eight effect records keyed by logical channel index, using stable ids for every persisted Feature 004 parameter except duplicated Gyver calibration mirror fields;
 4. one Idle Lighting record, including Idle Lighting activity floors and hysteresis;
 5. one global audio calibration record containing the only serialized Gyver VU/spectrum calibration values;
 6. payload CRC input covers exactly these bytes.
 
-The codec is deterministic and host-testable: serializing the same value twice produces identical bytes, and deserializing then serializing a valid payload reproduces the canonical byte sequence. Codec round trips, schema tests, and factory-default tests use only the global audio-calibration fields for Gyver calibration. Any noncanonical duplicated calibration values in input effect mirrors are normalized from the global calibration before comparison and are never emitted into the payload.
+The codec is deterministic and host-testable: serializing the same value twice produces identical bytes, and deserializing then serializing a valid payload reproduces the canonical byte sequence. Codec round trips, schema tests, and factory-default tests use exactly eight LED-channel records and eight effect records, use only logical channel indexes as identity, and use only the global audio-calibration fields for Gyver calibration. Any noncanonical duplicated calibration values in input effect mirrors are normalized from the global calibration before comparison and are never emitted into the payload. Per-channel `pixel_count` remains `uint16_t`; total calculations use at least `uint32_t` and apply the current board/runtime total capability outside the record format, so a future total-pixel capability change does not change schema 1.
 
 ## Record and slot format
 
@@ -162,11 +164,11 @@ Schema major version is stored in the record and payload. Feature 005 supports s
 
 ## Factory-default construction
 
-Factory defaults are built from Feature 005 canonical constants, not from mutable runtime state: `board::kStripGpios`; pixel counts 132/174/141/81/96/72; physical length `0` micrometres for every strip; density `board::kDefaultPixelsPerMetre`; GRBW order; brightness 16; enabled true; reversed false; six value-copied Gyver VU Gradient configurations with `enabled=true`, `source=stereo_left_right`, Off background, `vu_color_mode=level_position_gradient`, palette Green/Yellow/Orange/Red (`{0,255,0,0}`, `{255,255,0,0}`, `{255,128,0,0}`, `{255,0,0,0}`), `attack_ms=45`, and `release_ms=160`; disabled Idle Lighting with the Feature 004 default Idle values (`startup_idle_enabled=true`, `silence_timeout_ms=10000`, `audio_confirmation_ms=150`, idle colour `{0,0,0,255}`, `idle_brightness_q8=256`, fades 750/1500 ms, all input and strip masks, activity floors 32/32/32, hysteresis 4); and canonical global audio calibration defaults `gyver_left_noise_floor=32`, `gyver_right_noise_floor=32`, `gyver_noise_gate_hysteresis=4`, `gyver_spectrum_noise_floor=256`, and `gyver_spectrum_minimum_peak=64`. Factory physical length remains zero unless an actual measured board or product constant is added later through an approved specification change. Temporary diagnostic scene cycling is disabled for normal Release startup.
+Factory defaults are built from Feature 005 canonical constants, not from mutable runtime state. Channels 0..5 are the currently installed physical strips, mapped by board configuration to GP2..GP7, with pixel counts 132/174/141/81/96/72, physical length `0` mm, density `board::kDefaultPixelsPerMetre` currently 60, GRBW order, brightness 16, enabled true, reversed false, and six value-copied Gyver VU Gradient configurations with `enabled=true`, `source=stereo_left_right`, Off background, `vu_color_mode=level_position_gradient`, palette Green/Yellow/Orange/Red (`{0,255,0,0}`, `{255,255,0,0}`, `{255,128,0,0}`, `{255,0,0,0}`), `attack_ms=45`, and `release_ms=160`. Channels 6 and 7 are reserved for future hardware support and default to disabled, zero pixels, Effect Off, brightness 16, not reversed, unknown physical length, and unknown density; no GPIO is stored for any channel. Disabled Idle Lighting uses the Feature 004 default Idle values (`startup_idle_enabled=true`, `silence_timeout_ms=10000`, `audio_confirmation_ms=150`, idle colour `{0,0,0,255}`, `idle_brightness_q8=256`, fades 750/1500 ms, all currently supported input and channel masks, activity floors 32/32/32, hysteresis 4). Canonical global audio calibration defaults are `gyver_left_noise_floor=32`, `gyver_right_noise_floor=32`, `gyver_noise_gate_hysteresis=4`, `gyver_spectrum_noise_floor=256`, and `gyver_spectrum_minimum_peak=64`. Factory physical length remains zero unless an actual measured board or product constant is added later through an approved specification change. Temporary diagnostic scene cycling is disabled for normal Release startup.
 
 ## Boot sequence
 
-Startup order becomes: initialize stdio as currently required; construct factory defaults; initialize flash backend bounds; inspect slots; choose newest valid supported record or factory defaults; validate selected configuration; initialize LED output from selected LED config; initialize effect engine and Idle Lighting from selected runtime config; initialize audio capture; start normal loop. If LED initialization partially fails, audio still starts as in current behavior and diagnostics include usable strip count and configuration fallback status. If audio initialization fails, current fatal behavior is preserved.
+Startup order becomes: initialize stdio as currently required; construct factory defaults; initialize flash backend bounds; inspect slots; choose newest valid supported record or factory defaults; validate selected configuration against current board capability; initialize LED output from board-supported channel configs only; initialize effect engine and Idle Lighting from board-supported runtime configs only; initialize audio capture; start normal loop. If LED initialization partially fails, audio still starts as in current behavior and diagnostics include usable board-supported channel count and configuration fallback status. If audio initialization fails, current fatal behavior is preserved.
 
 ## Controlled flash-save sequence
 
@@ -186,7 +188,7 @@ The design reserves two equal slots sized for the maximum schema-1 payload plus 
 
 ## Host-test strategy
 
-Host tests exercise validation, factory defaults, serialization round trips, endian byte expectations, CRC32 known vectors, canonical Gyver calibration ownership, runtime overlay, serialization without duplicated calibration values, prevention of contradictory calibration state, known and unknown physical metadata, slot inspection, newest-valid selection, exact half-range ambiguity, duplicate sequence, deterministic write-target selection, selected-slot preservation, initial save to slot A, alternating slots, sequence wrap, fake-flash writes, write failure, readback failure, reset failure, corruption, truncation, length mismatch, malicious fields, unsupported schema, both slots invalid, interrupted erase, interrupted program before and during commit, permanently busy LED output, continuously pending audio work, safe-point timeout recovery with proof that no flash operation was issued, flash alignment, build-time negative overlap verification, and runtime fake-backend flash-overlap rejection. Tests run in the existing five-suite host architecture or in a sixth focused suite only after the task adds it to every GCC/Clang/sanitizer configuration.
+Host tests exercise validation, factory defaults, serialization round trips, endian byte expectations, CRC32 known vectors, eight-channel schema records, reserved channels 6/7, current six-channel board capability, rejection of unsupported enabled channels, absence of persisted GPIO, runtime adapters consuming only board-supported channels, total-pixel capability outside the schema, canonical Gyver calibration ownership, runtime overlay, serialization without duplicated calibration values, prevention of contradictory calibration state, known and unknown millimetre physical metadata, slot inspection, newest-valid selection, exact half-range ambiguity, duplicate sequence, deterministic write-target selection, selected-slot preservation, initial save to slot A, alternating slots, sequence wrap, fake-flash writes, write failure, readback failure, reset failure, corruption, truncation, length mismatch, malicious fields, unsupported schema, both slots invalid, interrupted erase, interrupted program before and during commit, permanently busy LED output, continuously pending audio work, safe-point timeout recovery with proof that no flash operation was issued, flash alignment, build-time negative overlap verification, and runtime fake-backend flash-overlap rejection. Tests run in the existing five-suite host architecture or in a sixth focused suite only after the task adds it to every GCC/Clang/sanitizer configuration.
 
 ## Firmware integration strategy
 
