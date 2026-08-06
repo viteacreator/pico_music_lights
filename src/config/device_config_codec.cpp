@@ -170,11 +170,7 @@ CodecStatus encode(const DeviceConfiguration &v, PayloadBuffer &o) {
     p16(p, c.physical.density_pixels_per_metre);
   }
   for (const auto &effect : v.effects) {
-    if (effect.type == effects::EffectType::off) {
-      pe(p, EffectDeviceConfig{});
-    } else {
-      pe(p, effect);
-    }
+    pe(p, canonicalize_effect(effect));
   }
   const auto &i = v.idle_lighting;
   p8(p, i.enabled);
@@ -209,8 +205,8 @@ CodecStatus decode(const uint8_t *d, std::size_t n, DeviceConfiguration &o) {
   const uint8_t *p = d;
   if (g16(p) || g16(p))
     return CodecStatus::reserved_nonzero;
-  DeviceConfiguration v{};
-  for (auto &c : v.led_channels) {
+  o = {};
+  for (auto &c : o.led_channels) {
     if (!gb(p, c.enabled))
       return CodecStatus::malformed;
     c.pixel_count = g16(p);
@@ -224,10 +220,10 @@ CodecStatus decode(const uint8_t *d, std::size_t n, DeviceConfiguration &o) {
     c.physical.length_mm = g16(p);
     c.physical.density_pixels_per_metre = g16(p);
   }
-  for (auto &e : v.effects)
+  for (auto &e : o.effects)
     if (!ge(p, e))
       return CodecStatus::malformed;
-  auto &i = v.idle_lighting;
+  auto &i = o.idle_lighting;
   if (!gb(p, i.enabled) || !gb(p, i.startup_idle_enabled))
     return CodecStatus::malformed;
   i.silence_timeout_ms = g16(p);
@@ -245,7 +241,7 @@ CodecStatus decode(const uint8_t *d, std::size_t n, DeviceConfiguration &o) {
   for (int x = 0; x < 4; x++)
     if (g8(p))
       return CodecStatus::reserved_nonzero;
-  auto &a = v.audio_calibration;
+  auto &a = o.audio_calibration;
   a.gyver_left_noise_floor = g16(p);
   a.gyver_right_noise_floor = g16(p);
   a.gyver_noise_gate_hysteresis = g16(p);
@@ -256,9 +252,13 @@ CodecStatus decode(const uint8_t *d, std::size_t n, DeviceConfiguration &o) {
       return CodecStatus::reserved_nonzero;
   if (p != d + n)
     return CodecStatus::malformed;
-  if (!validate(v))
+  if (!validate(o))
     return CodecStatus::validation_failed;
-  o = v;
+  PayloadBuffer canonical{};
+  if (encode(o, canonical) != CodecStatus::ok)
+    return CodecStatus::validation_failed;
+  if (!std::equal(d + 84, d + 932, canonical.data() + 84))
+    return CodecStatus::malformed;
   return CodecStatus::ok;
 }
 } // namespace config

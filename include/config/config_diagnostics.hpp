@@ -8,6 +8,22 @@
 
 namespace config {
 enum class BootSource : uint8_t { unknown, factory_defaults, persistent };
+enum class FallbackReason : uint8_t {
+  none,
+  empty,
+  both_invalid,
+  unsupported_schema,
+  read_failure,
+  invalid_region
+};
+enum class SchemaStatus : uint8_t { unknown, schema1, unsupported, corrupt };
+enum class AuthorityStatus : uint8_t {
+  none,
+  selected_valid,
+  target_valid,
+  target_invalid,
+  commit_unknown
+};
 enum class OperationPhase : uint8_t {
   idle,
   validation,
@@ -38,16 +54,22 @@ enum class OperationStatus : uint8_t {
 };
 struct ConfigurationDiagnostics {
   BootSource boot_source = BootSource::unknown;
+  FallbackReason fallback_reason = FallbackReason::none;
+  SchemaStatus schema_status = SchemaStatus::unknown;
+  AuthorityStatus authority = AuthorityStatus::none;
   bool has_persisted_record = false;
   storage::SlotState slot_a = storage::SlotState::erased;
   storage::SlotState slot_b = storage::SlotState::erased;
   storage::SlotId selected_slot = storage::SlotId::none;
   storage::SlotId target_slot = storage::SlotId::none;
   uint32_t selected_sequence = 0u;
+  uint32_t slot_a_sequence = 0u;
+  uint32_t slot_b_sequence = 0u;
   bool duplicate_sequence = false;
   bool sequence_ambiguous = false;
   ValidationResult validation{};
   OperationPhase save_phase = OperationPhase::idle;
+  OperationPhase transaction_phase = OperationPhase::idle;
   OperationStatus save_status = OperationStatus::none;
   OperationStatus reset_status = OperationStatus::none;
   bool commit_attempted = false;

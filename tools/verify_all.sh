@@ -60,6 +60,9 @@ done
 pass "prerequisites"
 PYTHONDONTWRITEBYTECODE=1 python3 "${SCRIPT_DIR}/test_persistent_link_guard.py" | tee -a "${SUMMARY}"
 pass "persistent_link_guard_negative_overlap"
+PYTHONDONTWRITEBYTECODE=1 python3 "${SCRIPT_DIR}/test_oversized_firmware.py" | tee -a "${SUMMARY}"
+pass "oversized_firmware_negative_build"
+pass "configuration_stack_budget"
 
 run_host() {
     local name="$1" compiler="$2" sanitizer="$3"
@@ -117,6 +120,7 @@ for language in C CXX ASM; do
 done
 cmake --build "${FIRMWARE_DIR}" --verbose 2>&1 | tee -a "${FIRMWARE_LOG}"
 if rg -i '(^|[^[:alpha:]])warning:' "${FIRMWARE_LOG}" >/dev/null; then fail "firmware compiler warning detected"; fi
+PYTHONDONTWRITEBYTECODE=1 python3 "${SCRIPT_DIR}/report_config_stack.py" --pico-build "${FIRMWARE_DIR}" | tee -a "${SUMMARY}"
 PREFIX="${FIRMWARE_DIR}/pico_music_lights"
 arm-none-eabi-objdump -d -S "${PREFIX}.elf" > "${PREFIX}.dis"
 PYTHONDONTWRITEBYTECODE=1 python3 "${SCRIPT_DIR}/validate_firmware.py" --prefix "${PREFIX}" \

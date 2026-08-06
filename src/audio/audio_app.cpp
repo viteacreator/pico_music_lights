@@ -1,6 +1,10 @@
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstdio>
+#if defined(PML_BUILD_OVERSIZED_FIRMWARE)
+extern "C" const uint8_t *pml_intentional_overlap_anchor();
+#endif
 #include <cstdlib>
 #include <cstring>
 
@@ -510,6 +514,11 @@ void print_vu_telemetry() {
 } // namespace
 
 int main() {
+#if defined(PML_BUILD_OVERSIZED_FIRMWARE)
+  volatile const uint8_t *negative_overlap_anchor =
+      pml_intentional_overlap_anchor();
+  (void)negative_overlap_anchor;
+#endif
   stdio_init_all();
 
   g_configuration_boot_result = g_configuration_store.load();

@@ -23,8 +23,9 @@ SlotInspection DeviceConfigStore::inspect_slot(SlotId slot,
   return inspect_record(destination.data(), destination.size());
 }
 
-LoadResult DeviceConfigStore::inspect_both() {
-  LoadResult result{};
+const LoadResult &DeviceConfigStore::inspect_both() {
+  inspection_ = {};
+  LoadResult &result = inspection_;
   if (!valid_region(backend_.region())) {
     result.status = StoreStatus::invalid_region;
     return result;
@@ -56,7 +57,11 @@ SaveResult DeviceConfigStore::prepare_save(
   if (!config::validate(configuration)) {
     return result;
   }
-  const LoadResult before = inspect_both();
+  const LoadResult &before = inspect_both();
+  result.a = before.a;
+  result.b = before.b;
+  result.selection = before.selection;
+  result.phase = StorePhase::inspection;
   if (before.status == StoreStatus::read_failure ||
       before.status == StoreStatus::invalid_region) {
     result.status = before.status;
@@ -78,20 +83,35 @@ SaveResult DeviceConfigStore::commit_prepared() {
   }
   result.target = prepared_target_.slot;
   result.sequence = prepared_target_.sequence;
+  result.a = inspection_.a;
+  result.b = inspection_.b;
+  result.selection = inspection_.selection;
+  const auto classify_precommit_failure = [&]() {
+    const LoadResult &current = inspect_both();
+    result.a = current.a;
+    result.b = current.b;
+    result.selection = current.selection;
+    if (current.status == StoreStatus::read_failure)
+      result.status = StoreStatus::read_failure;
+  };
   const uint32_t base = offset(prepared_target_.slot);
+  result.phase = StorePhase::erase;
   if (backend_.erase(base, kSlotSize) != FlashStatus::ok) {
+    classify_precommit_failure();
     prepared_ = false;
     return result;
   }
 
   for (uint32_t at = 0u; at < kHeaderSize + config::kSchema1PayloadSize;
        at += 256u) {
+    result.phase = StorePhase::data_program;
     program_page_.fill(0xffu);
     const uint32_t remaining = kHeaderSize + config::kSchema1PayloadSize - at;
     const uint32_t count = std::min<uint32_t>(program_page_.size(), remaining);
     std::copy_n(write_image_.data() + at, count, program_page_.data());
     if (backend_.program(base + at, program_page_.data(),
                          program_page_.size()) != FlashStatus::ok) {
+      classify_precommit_failure();
       prepared_ = false;
       return result;
     }
@@ -99,20 +119,27 @@ SaveResult DeviceConfigStore::commit_prepared() {
 
   SlotBuffer &target_buffer =
       prepared_target_.slot == SlotId::a ? slot_a_ : slot_b_;
+  result.phase = StorePhase::uncommitted_verify;
   if (!read_slot(prepared_target_.slot, target_buffer) ||
       inspect_record(target_buffer.data(), target_buffer.size(), false).state !=
           SlotState::valid) {
+    classify_precommit_failure();
     prepared_ = false;
     return result;
   }
 
   result.commit_attempted = true;
+  result.phase = StorePhase::commit_program;
   (void)backend_.program(base + kCommitPageOffset,
                          write_image_.data() + kCommitPageOffset,
                          kCommitPageSize, true);
   prepared_ = false;
 
-  const LoadResult after = inspect_both();
+  const LoadResult &after = inspect_both();
+  result.phase = StorePhase::committed_inspection;
+  result.a = after.a;
+  result.b = after.b;
+  result.selection = after.selection;
   if (after.status == StoreStatus::read_failure) {
     result.status = StoreStatus::commit_state_unknown;
     return result;

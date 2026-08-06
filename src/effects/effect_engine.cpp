@@ -407,6 +407,8 @@ bool EffectEngine::apply_pending() {
   return true;
 }
 
+void EffectEngine::cancel_pending() { pending_valid_ = false; }
+
 uint32_t EffectEngine::configuration_generation() const {
   return configuration_generation_;
 }

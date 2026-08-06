@@ -2,6 +2,7 @@
 
 #include "board/led_board_config.hpp"
 #include "config/runtime_adapter.hpp"
+#include "config/runtime_publication.hpp"
 #include "effects/effect_scenes.hpp"
 #include "led/diagnostic_rendering.hpp"
 #include "led/led_output_manager.hpp"
@@ -29,6 +30,7 @@ effects::DiagnosticSceneId g_active_diagnostic_scene =
 bool g_diagnostic_scenes_enabled = false;
 uint16_t g_volatile_gyver_left_noise_floor = 32u;
 uint16_t g_volatile_gyver_right_noise_floor = 32u;
+config::DeviceConfiguration g_active_configuration{};
 constexpr uint16_t kVolatileGyverVuHysteresis = 4u;
 
 bool is_gyver_vu(const effects::StripEffectConfig &config) {
@@ -141,6 +143,60 @@ bool configure_manager(const config::DeviceConfiguration &configuration) {
          initialization == LedStatus::partial_success;
 }
 
+class RendererPublicationBackend final
+    : public config::RuntimePublicationBackend {
+public:
+  bool prepare(const config::DeviceConfiguration &next) override {
+    return build_runtime_configuration(next, prepared_led_, prepared_effects_,
+                                       prepared_idle_);
+  }
+  bool acquire_new_resources(const config::DeviceConfiguration &) override {
+    return g_manager.ensure_drivers(prepared_led_) == LedStatus::ok;
+  }
+  bool switch_led(const config::DeviceConfiguration &) override {
+    for (std::size_t index = 0; index < previous_led_.size(); ++index) {
+      const LedStrip *strip = g_manager.strip(index);
+      if (strip == nullptr)
+        return false;
+      previous_led_[index] = strip->config();
+    }
+    return g_manager.configure(prepared_led_) == LedStatus::ok;
+  }
+  bool switch_effects_idle(const config::DeviceConfiguration &next) override {
+    if (g_effect_engine.stage_scene(prepared_effects_) !=
+        effects::EffectStatus::ok)
+      return false;
+    if (g_idle_lighting.stage_config(prepared_idle_) !=
+        effects::IdleLightingStatus::ok) {
+      g_effect_engine.cancel_pending();
+      return false;
+    }
+    (void)g_effect_engine.apply_pending();
+    (void)g_idle_lighting.apply_pending_config();
+    g_volatile_gyver_left_noise_floor =
+        next.audio_calibration.gyver_left_noise_floor;
+    g_volatile_gyver_right_noise_floor =
+        next.audio_calibration.gyver_right_noise_floor;
+    g_diagnostic_scenes_enabled = false;
+    return true;
+  }
+  bool rollback(const config::DeviceConfiguration &) override {
+    g_effect_engine.cancel_pending();
+    g_idle_lighting.cancel_pending_config();
+    return g_manager.configure(previous_led_) == LedStatus::ok;
+  }
+  void safe_disable() override { g_enabled = false; }
+
+private:
+  std::array<LedStripConfig, board::kStripCount> prepared_led_{};
+  std::array<LedStripConfig, board::kStripCount> previous_led_{};
+  std::array<effects::StripEffectConfig, effects::kEffectStripCount>
+      prepared_effects_{};
+  effects::IdleLightingConfig prepared_idle_{};
+};
+RendererPublicationBackend g_publication_backend;
+config::RuntimePublicationCoordinator g_publication{g_publication_backend};
+
 } // namespace
 
 bool diagnostic_renderer_initialize(
@@ -150,6 +206,8 @@ bool diagnostic_renderer_initialize(
   }
 
   g_initialized = configure_manager(configuration);
+  if (g_initialized)
+    g_active_configuration = configuration;
   return g_initialized;
 }
 
@@ -169,45 +227,11 @@ bool diagnostic_renderer_publish_configuration(
   if (!g_initialized || g_manager.is_frame_in_progress()) {
     return false;
   }
-  std::array<LedStripConfig, board::kStripCount> led_configs{};
-  std::array<effects::StripEffectConfig, effects::kEffectStripCount> scene{};
-  effects::IdleLightingConfig idle{};
-  if (!build_runtime_configuration(configuration, led_configs, scene, idle)) {
+  const config::PublicationStatus status =
+      g_publication.publish(g_active_configuration, configuration);
+  if (status != config::PublicationStatus::ok)
     return false;
-  }
-  // Claim only resources for newly enabled supported channels before changing
-  // live slices. Existing claims are reused and disabled-channel claims are
-  // deliberately retained, so repeated enable/disable cannot leak resources.
-  if (g_manager.ensure_drivers(led_configs) != LedStatus::ok) {
-    return false;
-  }
-  std::array<LedStripConfig, board::kStripCount> previous_led{};
-  for (std::size_t index = 0; index < previous_led.size(); ++index) {
-    const LedStrip *const strip = g_manager.strip(index);
-    if (strip == nullptr) {
-      return false;
-    }
-    previous_led[index] = strip->config();
-  }
-  if (g_manager.configure(led_configs) != LedStatus::ok) {
-    return false;
-  }
-  if (g_effect_engine.stage_scene(scene) != effects::EffectStatus::ok ||
-      g_idle_lighting.stage_config(idle) != effects::IdleLightingStatus::ok) {
-    // Resource claims are stable per logical channel and deliberately retained;
-    // restoring the old fixed slices cannot require a new claim.
-    if (g_manager.configure(previous_led) != LedStatus::ok) {
-      g_enabled = false;
-    }
-    return false;
-  }
-  (void)g_effect_engine.apply_pending();
-  (void)g_idle_lighting.apply_pending_config();
-  g_volatile_gyver_left_noise_floor =
-      configuration.audio_calibration.gyver_left_noise_floor;
-  g_volatile_gyver_right_noise_floor =
-      configuration.audio_calibration.gyver_right_noise_floor;
-  g_diagnostic_scenes_enabled = false;
+  g_active_configuration = configuration;
   return true;
 }
 

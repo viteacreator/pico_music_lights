@@ -262,6 +262,7 @@ public:
   void restore_default_scene();
   bool has_pending_configuration() const;
   bool apply_pending();
+  void cancel_pending();
 
   uint32_t configuration_generation() const;
   const StripEffectRuntime *runtime(std::size_t strip_index) const;

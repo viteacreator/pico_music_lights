@@ -83,6 +83,7 @@ add_executable(device_configuration_tests
     ../../src/config/device_config_codec.cpp
     ../../src/config/schema_enum_mapping.cpp
     ../../src/config/runtime_adapter.cpp
+    ../../src/config/runtime_publication.cpp
     ../../src/led/led_strip.cpp
     ../../src/config/config_diagnostics.cpp
     ../../src/config/config_boot.cpp
@@ -93,6 +94,7 @@ add_executable(device_configuration_tests
     ../../src/storage/device_config_store.cpp
     ../../src/storage/save_coordinator.cpp
     ../../src/effects/effect_engine.cpp
+    ../../src/effects/idle_lighting.cpp
     ../../src/effects/effect_rendering.cpp
     ../../src/effects/effect_scenes.cpp
 )

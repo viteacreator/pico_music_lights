@@ -13,17 +13,45 @@ FakeFlashBackend::FakeFlashBackend(FlashRegion region) : region_(region) {
   bytes_.fill(0xffu);
 }
 
-bool FakeFlashBackend::fault_matches(FakeOperationType type, uint32_t offset,
-                                     std::size_t length) {
-  const uint32_t operation = ++type_counts_[type_index(type)];
-  if (fault_.operation_number == 0u || fault_.type != type ||
-      fault_.operation_number != operation) {
-    return false;
+std::size_t FakeFlashBackend::completed_before_fault(FakeOperationType type,
+                                                     uint32_t offset,
+                                                     std::size_t length) {
+  const uint32_t type_operation = ++type_counts_[type_index(type)];
+  const uint32_t global_operation = ++global_operation_count_;
+  const uint64_t cumulative_start = cumulative_bytes_;
+  cumulative_bytes_ += length;
+  if (fault_.operation_number == 0u && fault_.global_operation_number == 0u &&
+      fault_.cumulative_bytes_before_failure == UINT64_MAX) {
+    return length;
   }
+  const bool type_match = fault_.type == type;
+  const bool operation_match =
+      (fault_.operation_number == 0u ||
+       fault_.operation_number == type_operation) &&
+      (fault_.global_operation_number == 0u ||
+       fault_.global_operation_number == global_operation);
   const uint64_t end = static_cast<uint64_t>(offset) + length;
   const uint64_t fault_end =
       static_cast<uint64_t>(fault_.range_start) + fault_.range_length;
-  return offset < fault_end && end > fault_.range_start;
+  const bool range_match = offset < fault_end && end > fault_.range_start;
+  if (!type_match || !operation_match || !range_match) {
+    return length;
+  }
+  std::size_t completed =
+      std::min<std::size_t>(length, fault_.bytes_before_failure);
+  if (fault_.range_start > offset && fault_.range_start < end) {
+    completed = std::min<std::size_t>(completed, fault_.range_start - offset);
+  }
+  if (fault_.cumulative_bytes_before_failure != UINT64_MAX) {
+    if (fault_.cumulative_bytes_before_failure <= cumulative_start) {
+      completed = 0u;
+    } else if (fault_.cumulative_bytes_before_failure <
+               cumulative_start + length) {
+      completed = std::min<std::size_t>(
+          completed, fault_.cumulative_bytes_before_failure - cumulative_start);
+    }
+  }
+  return completed;
 }
 
 void FakeFlashBackend::record(FakeOperationType type, uint32_t offset,
@@ -42,7 +70,8 @@ FlashStatus FakeFlashBackend::read(uint32_t offset, uint8_t *destination,
     record(FakeOperationType::read, offset, length, 0u, FlashStatus::bounds);
     return FlashStatus::bounds;
   }
-  if (fault_matches(FakeOperationType::read, offset, length)) {
+  if (completed_before_fault(FakeOperationType::read, offset, length) <
+      length) {
     record(FakeOperationType::read, offset, length, 0u,
            FlashStatus::read_failure);
     return FlashStatus::read_failure;
@@ -64,10 +93,8 @@ FlashStatus FakeFlashBackend::erase(uint32_t offset, std::size_t length) {
     record(FakeOperationType::erase, offset, length, 0u, FlashStatus::bounds);
     return FlashStatus::bounds;
   }
-  const bool fail = fault_matches(FakeOperationType::erase, offset, length);
   const std::size_t completed =
-      fail ? std::min<std::size_t>(length, fault_.bytes_before_failure)
-           : length;
+      completed_before_fault(FakeOperationType::erase, offset, length);
   std::fill_n(bytes_.begin() + offset, completed, 0xffu);
   const FlashStatus status =
       completed < length ? FlashStatus::injected_failure : FlashStatus::ok;
@@ -92,10 +119,7 @@ FlashStatus FakeFlashBackend::program(uint32_t offset, const uint8_t *source,
     record(type, offset, length, 0u, FlashStatus::bounds);
     return FlashStatus::bounds;
   }
-  const bool fail = fault_matches(type, offset, length);
-  const std::size_t completed =
-      fail ? std::min<std::size_t>(length, fault_.bytes_before_failure)
-           : length;
+  const std::size_t completed = completed_before_fault(type, offset, length);
   for (std::size_t index = 0u; index < completed; ++index) {
     if ((bytes_[offset + index] & source[index]) != source[index]) {
       record(type, offset, length, index, FlashStatus::program_violation);

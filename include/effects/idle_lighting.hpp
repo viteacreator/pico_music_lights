@@ -17,141 +17,153 @@ constexpr uint8_t kIdleAllStrips = (1u << kEffectStripCount) - 1u;
 constexpr uint16_t kIdleMaximumTimingMs = 60000u;
 
 enum class IdleLightingStatus : uint8_t {
-    ok,
-    invalid_parameter,
+  ok,
+  invalid_parameter,
 };
 
 enum class IdleLightingState : uint8_t {
-    effects,
-    idle,
-    fading_to_effects,
-    fading_to_idle,
+  effects,
+  idle,
+  fading_to_effects,
+  fading_to_idle,
 };
 
 // idle_brightness_q8 is a Q8 multiplier: 0 is off and 256 is the configured
 // RGBW idle colour at full logical channel value.
 struct IdleLightingConfig {
-    bool enabled = false;
-    bool startup_idle_enabled = true;
-    uint16_t silence_timeout_ms = 10000u;
-    uint16_t audio_confirmation_ms = 150u;
-    RgbwColor idle_color_rgbw{0u, 0u, 0u, 255u};
-    uint16_t idle_brightness_q8 = kEffectUnityGain;
-    uint16_t fade_to_effect_ms = 750u;
-    uint16_t fade_to_idle_ms = 1500u;
-    uint8_t activity_input_mask = kIdleAllInputs;
-    uint8_t strip_enable_mask = kIdleAllStrips;
-    uint16_t left_activity_floor = 32u;
-    uint16_t right_activity_floor = 32u;
-    uint16_t aux_activity_floor = 32u;
-    uint16_t activity_hysteresis = 4u;
+  bool enabled = false;
+  bool startup_idle_enabled = true;
+  uint16_t silence_timeout_ms = 10000u;
+  uint16_t audio_confirmation_ms = 150u;
+  RgbwColor idle_color_rgbw{0u, 0u, 0u, 255u};
+  uint16_t idle_brightness_q8 = kEffectUnityGain;
+  uint16_t fade_to_effect_ms = 750u;
+  uint16_t fade_to_idle_ms = 1500u;
+  uint8_t activity_input_mask = kIdleAllInputs;
+  uint8_t strip_enable_mask = kIdleAllStrips;
+  uint16_t left_activity_floor = 32u;
+  uint16_t right_activity_floor = 32u;
+  uint16_t aux_activity_floor = 32u;
+  uint16_t activity_hysteresis = 4u;
 };
 
 struct IdleLightingRuntime {
-    uint16_t effect_mix = 65535u;
-    IdleLightingState state = IdleLightingState::effects;
-    uint32_t inactive_ms = 0u;
-    bool left_active = false;
-    bool right_active = false;
-    bool aux_active = false;
-    bool initialized = false;
-    bool active_timer_valid = false;
-    bool inactive_timer_valid = false;
-    uint64_t last_timestamp_us = 0u;
-    uint64_t active_since_us = 0u;
-    uint64_t inactive_since_us = 0u;
+  uint16_t effect_mix = 65535u;
+  IdleLightingState state = IdleLightingState::effects;
+  uint32_t inactive_ms = 0u;
+  bool left_active = false;
+  bool right_active = false;
+  bool aux_active = false;
+  bool initialized = false;
+  bool active_timer_valid = false;
+  bool inactive_timer_valid = false;
+  uint64_t last_timestamp_us = 0u;
+  uint64_t active_since_us = 0u;
+  uint64_t inactive_since_us = 0u;
 };
 
 class IdleLightingController {
 public:
-    bool read_config(IdleLightingConfig& output) const;
-    IdleLightingStatus validate_config(const IdleLightingConfig& config) const;
-    IdleLightingStatus stage_config(const IdleLightingConfig& config);
-    bool has_pending_config() const;
-    bool apply_pending_config();
-    const IdleLightingRuntime& runtime() const;
+  bool read_config(IdleLightingConfig &output) const;
+  IdleLightingStatus validate_config(const IdleLightingConfig &config) const;
+  IdleLightingStatus stage_config(const IdleLightingConfig &config);
+  bool has_pending_config() const;
+  bool apply_pending_config();
+  void cancel_pending_config();
+  const IdleLightingRuntime &runtime() const;
 
-    void update(const AudioLevelFrame& audio, uint64_t timestamp_us);
-    void blend(const std::array<EffectRenderSpan, kEffectStripCount>& spans) const;
+  void update(const AudioLevelFrame &audio, uint64_t timestamp_us);
+  void
+  blend(const std::array<EffectRenderSpan, kEffectStripCount> &spans) const;
 
 private:
-    static bool update_gate(uint16_t raw,
-                            uint16_t floor,
-                            uint16_t hysteresis,
-                            bool& active);
-    static RgbwColor interpolate(RgbwColor idle, RgbwColor effect, uint16_t mix);
-    static RgbwColor scale(RgbwColor color, uint16_t level);
-    static uint16_t ramp(uint16_t current,
-                         uint16_t target,
-                         uint16_t duration_ms,
-                         uint32_t elapsed_ms);
-    static bool requires_runtime_reset(const IdleLightingConfig& active,
-                                       const IdleLightingConfig& proposed);
+  static bool update_gate(uint16_t raw, uint16_t floor, uint16_t hysteresis,
+                          bool &active);
+  static RgbwColor interpolate(RgbwColor idle, RgbwColor effect, uint16_t mix);
+  static RgbwColor scale(RgbwColor color, uint16_t level);
+  static uint16_t ramp(uint16_t current, uint16_t target, uint16_t duration_ms,
+                       uint32_t elapsed_ms);
+  static bool requires_runtime_reset(const IdleLightingConfig &active,
+                                     const IdleLightingConfig &proposed);
 
-    IdleLightingConfig active_{};
-    IdleLightingConfig pending_{};
-    IdleLightingRuntime runtime_{};
-    bool pending_valid_ = false;
+  IdleLightingConfig active_{};
+  IdleLightingConfig pending_{};
+  IdleLightingRuntime runtime_{};
+  bool pending_valid_ = false;
 };
 
-const char* effect_identifier(EffectType type);
-const char* effect_display_name(EffectType type);
+const char *effect_identifier(EffectType type);
+const char *effect_display_name(EffectType type);
 bool effect_supports_source(EffectType type, EffectSource source);
 
-enum class EffectCategory : uint8_t { utility, static_light, vu, spectrum, frequency, ambient };
+enum class EffectCategory : uint8_t {
+  utility,
+  static_light,
+  vu,
+  spectrum,
+  frequency,
+  ambient
+};
 enum EffectParameterMask : uint32_t {
-    effect_parameter_enabled = 1u << 0u,
-    effect_parameter_source = 1u << 1u,
-    effect_parameter_direction = 1u << 2u,
-    effect_parameter_colours = 1u << 3u,
-    effect_parameter_palette = 1u << 4u,
-    effect_parameter_gain = 1u << 5u,
-    effect_parameter_response = 1u << 6u,
-    effect_parameter_animation = 1u << 7u,
-    effect_parameter_geometry = 1u << 8u,
-    effect_parameter_strobe = 1u << 9u,
-    effect_parameter_gyver_adaptive = 1u << 10u,
-    effect_parameter_static_white_boost = 1u << 11u,
-    effect_parameter_frequency_selection = 1u << 12u,
-    effect_parameter_comet = 1u << 13u,
-    effect_parameter_gyver_vu_gate = 1u << 14u,
-    effect_parameter_spectrum_gate = 1u << 15u,
-    effect_parameter_running_policy = 1u << 16u,
-    effect_parameter_macro_mapping = 1u << 17u,
-    effect_parameter_full_strip_policy = 1u << 18u,
+  effect_parameter_enabled = 1u << 0u,
+  effect_parameter_source = 1u << 1u,
+  effect_parameter_direction = 1u << 2u,
+  effect_parameter_colours = 1u << 3u,
+  effect_parameter_palette = 1u << 4u,
+  effect_parameter_gain = 1u << 5u,
+  effect_parameter_response = 1u << 6u,
+  effect_parameter_animation = 1u << 7u,
+  effect_parameter_geometry = 1u << 8u,
+  effect_parameter_strobe = 1u << 9u,
+  effect_parameter_gyver_adaptive = 1u << 10u,
+  effect_parameter_static_white_boost = 1u << 11u,
+  effect_parameter_frequency_selection = 1u << 12u,
+  effect_parameter_comet = 1u << 13u,
+  effect_parameter_gyver_vu_gate = 1u << 14u,
+  effect_parameter_spectrum_gate = 1u << 15u,
+  effect_parameter_running_policy = 1u << 16u,
+  effect_parameter_macro_mapping = 1u << 17u,
+  effect_parameter_full_strip_policy = 1u << 18u,
 };
 
-enum class ParameterValueType : uint8_t { boolean, unsigned_integer, colour, bitmask, enumeration };
+enum class ParameterValueType : uint8_t {
+  boolean,
+  unsigned_integer,
+  colour,
+  bitmask,
+  enumeration
+};
 struct ParameterDescriptor {
-    const char* identifier;
-    const char* display_name;
-    ParameterValueType value_type;
-    const char* unit;
-    uint32_t minimum;
-    uint32_t maximum;
-    uint32_t step;
-    uint32_t canonical_default;
-    // Null for numeric, colour and bitmask fields; a stable comma-separated
-    // token list for bounded enum/select fields.
-    const char* allowed_values = nullptr;
+  const char *identifier;
+  const char *display_name;
+  ParameterValueType value_type;
+  const char *unit;
+  uint32_t minimum;
+  uint32_t maximum;
+  uint32_t step;
+  uint32_t canonical_default;
+  // Null for numeric, colour and bitmask fields; a stable comma-separated
+  // token list for bounded enum/select fields.
+  const char *allowed_values = nullptr;
 };
 
 struct EffectMetadata {
-    const char* identifier;
-    const char* display_name;
-    EffectCategory category;
-    uint32_t source_mask;
-    uint32_t parameter_mask;
+  const char *identifier;
+  const char *display_name;
+  EffectCategory category;
+  uint32_t source_mask;
+  uint32_t parameter_mask;
 };
 
-const EffectMetadata* effect_metadata(EffectType type);
-const ParameterDescriptor* effect_parameter_descriptor(EffectParameterMask parameter);
+const EffectMetadata *effect_metadata(EffectType type);
+const ParameterDescriptor *
+effect_parameter_descriptor(EffectParameterMask parameter);
 // Returns the fixed EffectType bit mask for effects that advertise this
 // public parameter. It returns zero for an invalid or non-single-bit mask.
 uint32_t effect_parameter_applicability(EffectParameterMask parameter);
 StripEffectConfig canonical_effect_config(EffectType type);
-const ParameterDescriptor* idle_parameter_descriptor(std::size_t index);
+const ParameterDescriptor *idle_parameter_descriptor(std::size_t index);
 constexpr std::size_t kEffectParameterDescriptorCount = 19u;
 constexpr std::size_t kIdleParameterDescriptorCount = 12u;
 
-}  // namespace effects
+} // namespace effects

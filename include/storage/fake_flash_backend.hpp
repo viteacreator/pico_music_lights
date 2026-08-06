@@ -10,6 +10,8 @@ struct FakeFault {
   uint32_t bytes_before_failure = 0u;
   uint32_t range_start = 0u;
   uint32_t range_length = UINT32_MAX;
+  uint32_t global_operation_number = 0u;
+  uint64_t cumulative_bytes_before_failure = UINT64_MAX;
 };
 struct FakeOperationEvent {
   FakeOperationType type = FakeOperationType::read;
@@ -33,7 +35,12 @@ public:
   OperationCounters counters() const override { return counters_; }
 
   void set_fault(FakeFault fault) { fault_ = fault; }
-  void clear_fault() { fault_.operation_number = 0u; }
+  void clear_fault() { fault_ = {}; }
+  void reset_fault_tracking() {
+    type_counts_.fill(0u);
+    global_operation_count_ = 0u;
+    cumulative_bytes_ = 0u;
+  }
   void fail_read_after(int calls);
   void fail_erase_after_bytes(int bytes);
   void fail_program_after_bytes(int bytes);
@@ -52,8 +59,10 @@ private:
   std::array<uint32_t, 4> type_counts_{};
   std::array<FakeOperationEvent, kMaximumEvents> events_{};
   std::size_t event_count_ = 0u;
+  uint32_t global_operation_count_ = 0u;
+  uint64_t cumulative_bytes_ = 0u;
 
-  bool fault_matches(FakeOperationType, uint32_t, std::size_t);
+  std::size_t completed_before_fault(FakeOperationType, uint32_t, std::size_t);
   void record(FakeOperationType, uint32_t, uint32_t, uint32_t, FlashStatus);
 };
 } // namespace storage

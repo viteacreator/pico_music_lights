@@ -114,6 +114,14 @@ enum class ValidationError : uint8_t {
   invalid_audio
 };
 enum class ValidationSection : uint8_t { none, led, effect, idle, audio };
+enum class ValidationReason : uint8_t {
+  none,
+  unsupported,
+  out_of_range,
+  incompatible,
+  reserved_nonzero,
+  malformed
+};
 enum class ValidationField : uint8_t {
   none,
   enabled,
@@ -121,11 +129,55 @@ enum class ValidationField : uint8_t {
   channel_order,
   total_pixel_count,
   effect_config,
+  source,
+  effect_type,
+  vu_color_mode,
+  static_color_mode,
+  frequency_selection,
+  full_strip_selection,
+  running_selection,
+  macro_band_mapping,
+  strobe_envelope_mode,
+  visual_gain,
+  attack_ms,
+  release_ms,
+  fade_decay_ms,
+  animation_speed_q8,
+  color_spacing_q8,
+  strobe_frequency_hz,
+  strobe_duty_percent,
+  strobe_fade_ms,
+  background_brightness_q8,
+  auto_gain_headroom_q8,
+  adaptive_fast_response_ms,
+  adaptive_average_response_ms,
+  adaptive_trigger_percent,
+  adaptive_event_decay_ms,
+  gyver_animation_interval_ms,
+  gyver_rainbow_span_percent,
+  auto_gain_reference_rise_ms,
+  auto_gain_reference_fall_ms,
+  frequency_comet_tail_percent,
+  white_drive_percent,
+  rgb_assist_color,
+  segment_count,
+  zone_count,
+  macro_region_count,
   logical_channel_mask,
   activity_input_mask,
   timing,
+  silence_timeout_ms,
+  audio_confirmation_ms,
+  fade_to_effect_ms,
+  fade_to_idle_ms,
   brightness,
   activity_floor,
+  left_activity_floor,
+  right_activity_floor,
+  aux_activity_floor,
+  gyver_left_noise_floor,
+  gyver_right_noise_floor,
+  gyver_noise_gate_hysteresis,
   noise_floor,
   hysteresis
 };
@@ -134,6 +186,7 @@ struct ValidationResult {
   uint8_t channel = 0xff;
   ValidationSection section = ValidationSection::none;
   ValidationField field = ValidationField::none;
+  ValidationReason reason = ValidationReason::none;
   constexpr explicit operator bool() const {
     return error == ValidationError::ok;
   }
@@ -141,6 +194,7 @@ struct ValidationResult {
 DeviceConfiguration make_factory_defaults();
 ValidationResult validate(const DeviceConfiguration &value);
 bool equal(const DeviceConfiguration &a, const DeviceConfiguration &b);
+EffectDeviceConfig canonicalize_effect(const EffectDeviceConfig &value);
 effects::StripEffectConfig
 to_runtime(const EffectDeviceConfig &value,
            const AudioCalibrationConfig &calibration);

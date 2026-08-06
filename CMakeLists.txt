@@ -42,6 +42,7 @@ add_executable(pico_music_lights
         src/config/device_config_codec.cpp
         src/config/schema_enum_mapping.cpp
         src/config/runtime_adapter.cpp
+        src/config/runtime_publication.cpp
         src/config/crc32.cpp
         src/config/config_diagnostics.cpp
         src/config/config_boot.cpp
@@ -71,6 +72,15 @@ add_executable(pico_music_lights
         src/led/diagnostic_renderer.cpp
         )
 
+option(PML_BUILD_OVERSIZED_FIRMWARE
+       "Build an intentionally overlapping image for verifier use only" OFF)
+if(PML_BUILD_OVERSIZED_FIRMWARE)
+    target_sources(pico_music_lights PRIVATE
+        src/validation/persistent_overlap_negative.cpp)
+    target_compile_definitions(pico_music_lights PRIVATE
+        PML_BUILD_OVERSIZED_FIRMWARE=1)
+endif()
+
 pico_set_program_name(pico_music_lights "pico_music_lights")
 pico_set_program_version(pico_music_lights "0.1")
 
@@ -91,6 +101,7 @@ target_include_directories(pico_music_lights PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/include
         ${CMAKE_CURRENT_LIST_DIR}/src
 )
+target_compile_options(pico_music_lights PRIVATE -fstack-usage)
 
 # Add any user requested libraries
 target_link_libraries(pico_music_lights 
@@ -109,9 +120,12 @@ target_compile_definitions(pico_music_lights PRIVATE
         )
 
 # Fail at link time before extra flashable artifacts are produced if the
-# application enters the final 8 KiB reserved for Feature 005 slots.
+# application enters the final 8 KiB reserved for Feature 005 slots. The cache
+# override exists only for the verifier's intentionally oversized negative build.
+set(PML_PERSISTENT_START 0x101fe000 CACHE STRING
+    "Feature 005 persistent-region link boundary")
 target_link_options(pico_music_lights PRIVATE
+        "LINKER:--defsym=__pml_persistent_start=${PML_PERSISTENT_START}"
         "LINKER:-T,${CMAKE_CURRENT_LIST_DIR}/src/storage/persistent_region_guard.ld")
 
 pico_add_extra_outputs(pico_music_lights)
-
