@@ -1,87 +1,135 @@
 #include "storage/device_config_store.hpp"
+
 #include <algorithm>
+
 namespace storage {
-uint32_t DeviceConfigStore::offset(SlotId s) const {
-  return backend_.region().persistent_start + (s == SlotId::b ? kSlotSize : 0);
+uint32_t DeviceConfigStore::offset(SlotId slot) const {
+  return backend_.region().persistent_start +
+         (slot == SlotId::b ? kSlotSize : 0u);
 }
-bool DeviceConfigStore::read_slot(SlotId s, SlotBuffer &o) {
-  return backend_.read(offset(s), o.data(), o.size()) == FlashStatus::ok;
+
+bool DeviceConfigStore::read_slot(SlotId slot, SlotBuffer &destination) {
+  return backend_.read(offset(slot), destination.data(), destination.size()) ==
+         FlashStatus::ok;
 }
-LoadResult DeviceConfigStore::load() {
-  LoadResult r{};
+
+SlotInspection DeviceConfigStore::inspect_slot(SlotId slot,
+                                               SlotBuffer &destination) {
+  if (!read_slot(slot, destination)) {
+    SlotInspection result{};
+    result.state = SlotState::read_error;
+    return result;
+  }
+  return inspect_record(destination.data(), destination.size());
+}
+
+LoadResult DeviceConfigStore::inspect_both() {
+  LoadResult result{};
   if (!valid_region(backend_.region())) {
-    r.status = StoreStatus::invalid_region;
-    return r;
+    result.status = StoreStatus::invalid_region;
+    return result;
   }
-  SlotBuffer a, b;
-  if (!read_slot(SlotId::a, a) || !read_slot(SlotId::b, b)) {
-    r.status = StoreStatus::read_failure;
-    return r;
+  result.a = inspect_slot(SlotId::a, slot_a_);
+  result.b = inspect_slot(SlotId::b, slot_b_);
+  if (result.a.state == SlotState::read_error ||
+      result.b.state == SlotState::read_error) {
+    result.status = StoreStatus::read_failure;
+    return result;
   }
-  r.a = inspect_record(a.data(), a.size());
-  r.b = inspect_record(b.data(), b.size());
-  r.selection = select_newest(r.a, r.b);
-  if (r.selection.selected == SlotId::none) {
-    r.status = StoreStatus::no_record;
-    return r;
+  result.selection = select_newest(result.a, result.b);
+  if (result.selection.selected == SlotId::none) {
+    result.status = StoreStatus::no_record;
+    return result;
   }
-  r.value = r.selection.selected == SlotId::a ? r.a.value : r.b.value;
-  r.status = StoreStatus::ok;
-  return r;
+  result.value =
+      result.selection.selected == SlotId::a ? result.a.value : result.b.value;
+  result.status = StoreStatus::ok;
+  return result;
 }
-SaveResult DeviceConfigStore::save(const config::DeviceConfiguration &v) {
-  SaveResult r{};
-  auto before = load();
+
+LoadResult DeviceConfigStore::load() { return inspect_both(); }
+
+SaveResult DeviceConfigStore::prepare_save(
+    const config::DeviceConfiguration &configuration) {
+  prepared_ = false;
+  SaveResult result{};
+  if (!config::validate(configuration)) {
+    return result;
+  }
+  const LoadResult before = inspect_both();
   if (before.status == StoreStatus::read_failure ||
       before.status == StoreStatus::invalid_region) {
-    r.status = before.status;
-    return r;
+    result.status = before.status;
+    return result;
   }
-  auto target = choose_target(before.selection);
-  r.target = target.slot;
-  r.sequence = target.sequence;
-  SlotBuffer image;
-  build_record(v, target.sequence, image);
-  uint32_t base = offset(target.slot);
-  if (backend_.erase(base, kSlotSize) != FlashStatus::ok)
-    return r;
-  std::array<uint8_t, 256> page{};
-  for (uint32_t at = 0; at < kCommitPageOffset; at += 256) {
-    page.fill(0xff);
-    uint32_t count =
-        std::min<uint32_t>(256, kHeaderSize + config::kSchema1PayloadSize - at);
-    if (at >= kHeaderSize + config::kSchema1PayloadSize)
-      break;
-    std::copy_n(image.data() + at, count, page.data());
-    if (backend_.program(base + at, page.data(), page.size()) !=
-        FlashStatus::ok)
-      return r;
+  prepared_target_ = choose_target(before.selection);
+  build_record(configuration, prepared_target_.sequence, write_image_);
+  result.target = prepared_target_.slot;
+  result.sequence = prepared_target_.sequence;
+  result.status = StoreStatus::ok;
+  prepared_ = true;
+  return result;
+}
+
+SaveResult DeviceConfigStore::commit_prepared() {
+  SaveResult result{};
+  if (!prepared_) {
+    return result;
   }
-  SlotBuffer verify;
-  if (!read_slot(target.slot, verify) ||
-      inspect_record(verify.data(), verify.size(), false).state !=
-          SlotState::valid)
-    return r;
-  r.commit_attempted = true;
-  if (backend_.program(base + kCommitPageOffset,
-                       image.data() + kCommitPageOffset, kCommitPageSize,
-                       true) != FlashStatus::ok) {
+  result.target = prepared_target_.slot;
+  result.sequence = prepared_target_.sequence;
+  const uint32_t base = offset(prepared_target_.slot);
+  if (backend_.erase(base, kSlotSize) != FlashStatus::ok) {
+    prepared_ = false;
+    return result;
   }
-  auto after = load();
+
+  for (uint32_t at = 0u; at < kHeaderSize + config::kSchema1PayloadSize;
+       at += 256u) {
+    program_page_.fill(0xffu);
+    const uint32_t remaining = kHeaderSize + config::kSchema1PayloadSize - at;
+    const uint32_t count = std::min<uint32_t>(program_page_.size(), remaining);
+    std::copy_n(write_image_.data() + at, count, program_page_.data());
+    if (backend_.program(base + at, program_page_.data(),
+                         program_page_.size()) != FlashStatus::ok) {
+      prepared_ = false;
+      return result;
+    }
+  }
+
+  SlotBuffer &target_buffer =
+      prepared_target_.slot == SlotId::a ? slot_a_ : slot_b_;
+  if (!read_slot(prepared_target_.slot, target_buffer) ||
+      inspect_record(target_buffer.data(), target_buffer.size(), false).state !=
+          SlotState::valid) {
+    prepared_ = false;
+    return result;
+  }
+
+  result.commit_attempted = true;
+  (void)backend_.program(base + kCommitPageOffset,
+                         write_image_.data() + kCommitPageOffset,
+                         kCommitPageSize, true);
+  prepared_ = false;
+
+  const LoadResult after = inspect_both();
   if (after.status == StoreStatus::read_failure) {
-    r.status = StoreStatus::commit_state_unknown;
-    return r;
+    result.status = StoreStatus::commit_state_unknown;
+    return result;
   }
-  const auto &t = target.slot == SlotId::a ? after.a : after.b;
-  if (!t.valid()) {
-    r.status = StoreStatus::target_invalid;
-    return r;
+  const SlotInspection &target =
+      prepared_target_.slot == SlotId::a ? after.a : after.b;
+  if (!target.valid() || after.selection.selected != prepared_target_.slot) {
+    result.status = StoreStatus::target_invalid;
+    return result;
   }
-  if (after.selection.selected != target.slot) {
-    r.status = StoreStatus::target_invalid;
-    return r;
-  }
-  r.status = StoreStatus::ok;
-  return r;
+  result.status = StoreStatus::ok;
+  return result;
+}
+
+SaveResult
+DeviceConfigStore::save(const config::DeviceConfiguration &configuration) {
+  SaveResult result = prepare_save(configuration);
+  return result.status == StoreStatus::ok ? commit_prepared() : result;
 }
 } // namespace storage

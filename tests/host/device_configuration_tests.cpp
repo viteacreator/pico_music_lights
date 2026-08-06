@@ -1,6 +1,9 @@
+#include "config/config_boot.hpp"
 #include "config/config_service.hpp"
 #include "config/crc32.hpp"
 #include "config/device_config_codec.hpp"
+#include "config/runtime_adapter.hpp"
+#include "config/schema_enum_mapping.hpp"
 #include "storage/fake_flash_backend.hpp"
 #include "storage/save_coordinator.hpp"
 #include <cstdlib>
@@ -147,50 +150,200 @@ void corruption_and_interruption() {
   CHECK(s.load().status == StoreStatus::no_record);
 }
 struct Points : SafePointController {
-  bool led = true, audio = true, activation = true;
+  bool led = true, audio = true, activation = true, preparation = true;
   int stage = 0;
   FlashBackend *flash = nullptr;
-  bool acquire_led(uint32_t) override {
+  bool prepare_activation(const DeviceConfiguration &) override {
     CHECK(stage == 0);
     stage = 1;
+    return preparation;
+  }
+  bool acquire_led(uint32_t) override {
+    CHECK(stage == 1);
+    stage = 2;
     return led;
   }
   bool acquire_audio(uint32_t) override {
-    CHECK(stage == 1);
-    stage = 2;
+    CHECK(stage == 2);
+    stage = 3;
     return audio;
   }
-  bool activate(const DeviceConfiguration &) override {
-    CHECK(stage == 2);
+  bool activate_prepared() override {
+    CHECK(stage == 3);
     if (flash) {
       auto c = flash->counters();
       CHECK(c.erases == 0 && c.programs == 0);
     }
-    stage = 3;
+    stage = 4;
     return activation;
   }
-  void restore() override { stage = 4; }
+  void restore() override { stage = 5; }
+  void reset() {
+    led = audio = activation = preparation = true;
+    stage = 0;
+  }
 };
 void service_safe_points_and_reset() {
   ConfigService c;
   FakeFlashBackend f;
   DeviceConfigStore s(f);
   Points p;
+  config::ConfigurationDiagnostics diagnostics{};
   p.flash = &f;
-  SaveCoordinator co(c, s, p);
+  SaveCoordinator co(c, s, p, diagnostics);
   p.led = false;
   CHECK(co.save() == CoordinatorStatus::led_timeout);
   CHECK(f.counters().erases == 0);
-  p = {};
+  p.reset();
   p.flash = &f;
   p.audio = false;
   CHECK(co.save() == CoordinatorStatus::audio_timeout);
   CHECK(f.counters().erases == 0);
-  p = {};
+  p.reset();
   p.flash = &f;
   CHECK(co.factory_reset(1) == CoordinatorStatus::confirmation_required);
   CHECK(co.save() == CoordinatorStatus::ok);
   CHECK(c.has_persisted_record() && !c.dirty());
+}
+
+void exhaustive_commit_page_interruption_and_reboot() {
+  const auto defaults = make_factory_defaults();
+  for (uint32_t cut = 0u; cut < 256u; ++cut) {
+    FakeFlashBackend flash;
+    DeviceConfigStore store(flash);
+    CHECK(store.prepare_save(defaults).status == StoreStatus::ok);
+    flash.set_fault({FakeOperationType::commit, 1u, cut, 0u, UINT32_MAX});
+    const SaveResult result = store.commit_prepared();
+    FakeFlashBackend reboot_flash = flash;
+    reboot_flash.clear_fault();
+    DeviceConfigStore reboot(reboot_flash);
+    const LoadResult loaded = reboot.load();
+    if (cut < 16u) {
+      CHECK(result.status == StoreStatus::target_invalid);
+      CHECK(loaded.status == StoreStatus::no_record);
+    } else {
+      CHECK(result.status == StoreStatus::ok);
+      CHECK(loaded.status == StoreStatus::ok);
+      CHECK(loaded.selection.selected == SlotId::a);
+    }
+  }
+}
+
+void post_commit_unknown_does_not_repair() {
+  FakeFlashBackend flash;
+  DeviceConfigStore store(flash);
+  const auto defaults = make_factory_defaults();
+  CHECK(store.prepare_save(defaults).status == StoreStatus::ok);
+  // Two preparation reads and one uncommitted target read precede the two
+  // independent post-commit reads. Fail the first post-commit read.
+  flash.set_fault({FakeOperationType::read, 4u, 0u, 0u, UINT32_MAX});
+  const SaveResult result = store.commit_prepared();
+  CHECK(result.status == StoreStatus::commit_state_unknown);
+  CHECK(result.commit_attempted);
+  CHECK(flash.counters().erases == 1u);
+  flash.clear_fault();
+  DeviceConfigStore reboot(flash);
+  CHECK(reboot.load().status == StoreStatus::ok);
+  CHECK(flash.counters().erases == 1u);
+}
+
+void activation_then_storage_failure_keeps_active_dirty() {
+  ConfigService service;
+  auto changed = service.draft();
+  changed.led_channels[0].brightness = 7u;
+  CHECK(service.replace_draft(changed));
+  FakeFlashBackend flash;
+  DeviceConfigStore store(flash);
+  flash.set_fault({FakeOperationType::erase, 1u, 0u, 0u, UINT32_MAX});
+  Points points;
+  points.flash = &flash;
+  config::ConfigurationDiagnostics diagnostics{};
+  SaveCoordinator coordinator(service, store, points, diagnostics);
+  CHECK(coordinator.save() == CoordinatorStatus::storage_failed);
+  CHECK(service.active().led_channels[0].brightness == 7u);
+  CHECK(service.last_verified_persisted().led_channels[0].brightness == 16u);
+  CHECK(!service.has_persisted_record());
+  CHECK(service.dirty());
+}
+
+void schema_enum_mapping_is_explicit() {
+  uint8_t id = 255u;
+  CHECK(config::schema::effect_type_to_id(
+      effects::EffectType::gyver_spectrum_analyzer, id));
+  CHECK(id == 22u);
+  effects::EffectType type = effects::EffectType::off;
+  CHECK(config::schema::effect_type_from_id(12u, type));
+  CHECK(type == effects::EffectType::gyver_vu_gradient);
+  CHECK(!config::schema::effect_type_from_id(23u, type));
+}
+
+void disabled_channel_retained_count_runtime_zero() {
+  auto value = make_factory_defaults();
+  value.led_channels[2].enabled = false;
+  value.led_channels[2].pixel_count = 65535u;
+  CurrentBoardRuntimeConfiguration runtime{};
+  CHECK(adapt_current_board(value, runtime));
+  CHECK(!runtime.led[2].enabled);
+  CHECK(runtime.led[2].pixel_count == 0u);
+  CHECK(value.led_channels[2].pixel_count == 65535u);
+  value.led_channels[6].pixel_count = 1234u;
+  CHECK(adapt_current_board(value, runtime));
+  value.led_channels[6].enabled = true;
+  CHECK(!adapt_current_board(value, runtime));
+}
+
+void startup_load_and_factory_fallback() {
+  FakeFlashBackend empty_flash;
+  DeviceConfigStore empty_store(empty_flash);
+  ConfigService empty_service;
+  config::ConfigurationDiagnostics empty_diagnostics{};
+  config::initialize_from_storage(empty_service, empty_store.load(),
+                                  empty_flash.region(), empty_diagnostics);
+  CHECK(empty_diagnostics.boot_source == config::BootSource::factory_defaults);
+  CHECK(!empty_service.has_persisted_record());
+  CHECK(!empty_service.dirty());
+
+  FakeFlashBackend saved_flash;
+  DeviceConfigStore saved_store(saved_flash);
+  auto saved = make_factory_defaults();
+  saved.led_channels[0].brightness = 9u;
+  CHECK(saved_store.save(saved).status == StoreStatus::ok);
+  ConfigService saved_service;
+  config::ConfigurationDiagnostics saved_diagnostics{};
+  config::initialize_from_storage(saved_service, saved_store.load(),
+                                  saved_flash.region(), saved_diagnostics);
+  CHECK(saved_diagnostics.boot_source == config::BootSource::persistent);
+  CHECK(saved_service.has_persisted_record());
+  CHECK(saved_service.active().led_channels[0].brightness == 9u);
+  CurrentBoardRuntimeConfiguration runtime{};
+  CHECK(adapt_current_board(saved_service.active(), runtime));
+  CHECK(runtime.led[0].brightness == 9u);
+}
+
+void off_effect_canonicalization_ignores_hidden_fields() {
+  auto first = make_factory_defaults();
+  auto second = first;
+  second.effects[7].primary_color = {1u, 2u, 3u, 4u};
+  second.effects[7].attack_ms = 999u;
+  PayloadBuffer a{}, b{};
+  CHECK(encode(first, a) == CodecStatus::ok);
+  CHECK(encode(second, b) == CodecStatus::ok);
+  CHECK(a == b);
+  CHECK(equal(first, second));
+}
+void bounded_diagnostics_and_memory_budget() {
+  config::ConfigurationDiagnostics diagnostics{};
+  diagnostics.boot_source = config::BootSource::factory_defaults;
+  diagnostics.flash_region = {16384, 4096, 4096, 12288, 4096, 256};
+  std::array<char, config::kDiagnosticTextCapacity> text{};
+  const std::size_t length = config::format_diagnostics(diagnostics, text);
+  CHECK(length < text.size());
+  CHECK(text.back() == '\0');
+  CHECK(sizeof(EffectDeviceConfig) <= 128u);
+  CHECK(sizeof(DeviceConfiguration) <= 1200u);
+  CHECK(sizeof(SlotInspection) <= 1300u);
+  CHECK(sizeof(LoadResult) <= 4000u);
+  CHECK(DeviceConfigStore::workspace_bytes() == 12544u);
 }
 void flash_layout() {
   CHECK(valid_region({16384, 4096, 4096, 12288, 4096, 256}));
@@ -208,6 +361,14 @@ int main() {
   storage_empty_first_and_alternating();
   corruption_and_interruption();
   service_safe_points_and_reset();
+  exhaustive_commit_page_interruption_and_reboot();
+  post_commit_unknown_does_not_repair();
+  activation_then_storage_failure_keeps_active_dirty();
+  schema_enum_mapping_is_explicit();
+  disabled_channel_retained_count_runtime_zero();
+  startup_load_and_factory_fallback();
+  off_effect_canonicalization_ignores_hidden_fields();
+  bounded_diagnostics_and_memory_budget();
   flash_layout();
   std::cout << "device_configuration_tests: PASS\n";
 }

@@ -13,11 +13,12 @@ public:
   bool has_persisted_record() const { return has_persisted_; }
   bool dirty() const;
   ValidationResult replace_draft(const DeviceConfiguration &);
-  ValidationResult preview();
+  // Used only after the matching runtime publication has succeeded.
+  void activation_succeeded(const DeviceConfiguration &);
   void load_persisted(const DeviceConfiguration &);
   void load_factory_fallback();
-  void mark_saved();
-  void discard();
+  void committed_save_succeeded(const DeviceConfiguration &);
+  const DeviceConfiguration &discard_target() const;
   bool save_eligible() const { return dirty() || !has_persisted_; }
 
 private:

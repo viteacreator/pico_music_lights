@@ -58,6 +58,8 @@ for candidate in "$(dirname "${PICOTOOL_REAL}")" "$(dirname "${ARM_BIN_DIR}")/li
 done
 [[ -n "${PICOTOOL_CMAKE_DIR}" ]] || fail "no installed picotool 2.3.0 CMake package found"
 pass "prerequisites"
+PYTHONDONTWRITEBYTECODE=1 python3 "${SCRIPT_DIR}/test_persistent_link_guard.py" | tee -a "${SUMMARY}"
+pass "persistent_link_guard_negative_overlap"
 
 run_host() {
     local name="$1" compiler="$2" sanitizer="$3"

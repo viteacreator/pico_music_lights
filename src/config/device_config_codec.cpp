@@ -1,4 +1,5 @@
 #include "config/device_config_codec.hpp"
+#include "config/schema_enum_mapping.hpp"
 #include <algorithm>
 namespace config {
 namespace {
@@ -31,32 +32,38 @@ bool gb(const uint8_t *&p, bool &v) {
   v = x;
   return true;
 }
+template <typename T, typename F> uint8_t schema_id(T value, F mapping) {
+  uint8_t id = 0xffu;
+  (void)mapping(value, id);
+  return id;
+}
 void pe(uint8_t *&p, const EffectDeviceConfig &v) {
   p8(p, v.enabled);
-  p8(p, (uint8_t)v.type);
-  p8(p, (uint8_t)v.source);
+  p8(p, schema_id(v.type, schema::effect_type_to_id));
+  p8(p, schema_id(v.source, schema::effect_source_to_id));
   pc(p, v.primary_color);
   pc(p, v.secondary_color);
   pc(p, v.background_color);
   for (auto c : v.palette)
     pc(p, c);
-  p8(p, (uint8_t)v.static_color_mode);
+  p8(p, schema_id(v.static_color_mode, schema::static_color_to_id));
   p16(p, v.white_drive_percent);
   pc(p, v.rgb_assist_color);
   for (auto c : v.gyver_frequency_colors)
     pc(p, c);
-  p8(p, (uint8_t)v.vu_color_mode);
-  p8(p, (uint8_t)v.frequency_selection);
-  p8(p, (uint8_t)v.gyver_full_strip_selection);
-  p8(p, (uint8_t)v.gyver_running_frequencies_selection);
-  p8(p, (uint8_t)v.macro_band_mapping);
+  p8(p, schema_id(v.vu_color_mode, schema::vu_color_to_id));
+  p8(p, schema_id(v.frequency_selection, schema::frequency_to_id));
+  p8(p, schema_id(v.gyver_full_strip_selection, schema::selection_to_id));
+  p8(p,
+     schema_id(v.gyver_running_frequencies_selection, schema::selection_to_id));
+  p8(p, schema_id(v.macro_band_mapping, schema::macro_to_id));
   p16(p, v.animation_speed_q8);
   p16(p, v.color_spacing_q8);
   p16(p, v.fade_decay_ms);
   p8(p, v.strobe_frequency_hz);
   p8(p, v.strobe_duty_percent);
   p16(p, v.strobe_fade_ms);
-  p8(p, (uint8_t)v.strobe_envelope_mode);
+  p8(p, schema_id(v.strobe_envelope_mode, schema::envelope_to_id));
   p16(p, v.background_brightness_q8);
   p8(p, v.auto_gain_enabled);
   p16(p, v.auto_gain_headroom_q8);
@@ -83,43 +90,41 @@ void pe(uint8_t *&p, const EffectDeviceConfig &v) {
 bool ge(const uint8_t *&p, EffectDeviceConfig &v) {
   if (!gb(p, v.enabled))
     return false;
-  auto t = g8(p), s = g8(p);
-  if (t > 22 || s > 11)
+  const auto type_id = g8(p);
+  const auto source_id = g8(p);
+  if (!schema::effect_type_from_id(type_id, v.type) ||
+      !schema::effect_source_from_id(source_id, v.source))
     return false;
-  v.type = (effects::EffectType)t;
-  v.source = (effects::EffectSource)s;
   v.primary_color = gc(p);
   v.secondary_color = gc(p);
   v.background_color = gc(p);
   for (auto &c : v.palette)
     c = gc(p);
-  auto sm = g8(p);
-  if (sm > 1)
+  const auto static_id = g8(p);
+  if (!schema::static_color_from_id(static_id, v.static_color_mode))
     return false;
-  v.static_color_mode = (effects::StaticColorMode)sm;
   v.white_drive_percent = g16(p);
   v.rgb_assist_color = gc(p);
   for (auto &c : v.gyver_frequency_colors)
     c = gc(p);
-  auto vu = g8(p), fs = g8(p), a = g8(p), b = g8(p), m = g8(p);
-  if (vu > 2 || fs > 3 || a > 1 || b > 1 || m > 1)
+  const auto vu_id = g8(p), frequency_id = g8(p), full_id = g8(p),
+             running_id = g8(p), macro_id = g8(p);
+  if (!schema::vu_color_from_id(vu_id, v.vu_color_mode) ||
+      !schema::frequency_from_id(frequency_id, v.frequency_selection) ||
+      !schema::selection_from_id(full_id, v.gyver_full_strip_selection) ||
+      !schema::selection_from_id(running_id,
+                                 v.gyver_running_frequencies_selection) ||
+      !schema::macro_from_id(macro_id, v.macro_band_mapping))
     return false;
-  v.vu_color_mode = (effects::VuColorMode)vu;
-  v.frequency_selection = (effects::FrequencySelection)fs;
-  v.gyver_full_strip_selection = (effects::GyverFullStripSelectionPolicy)a;
-  v.gyver_running_frequencies_selection =
-      (effects::GyverFullStripSelectionPolicy)b;
-  v.macro_band_mapping = (effects::GenericMacroBandMapping)m;
   v.animation_speed_q8 = g16(p);
   v.color_spacing_q8 = g16(p);
   v.fade_decay_ms = g16(p);
   v.strobe_frequency_hz = g8(p);
   v.strobe_duty_percent = g8(p);
   v.strobe_fade_ms = g16(p);
-  auto se = g8(p);
-  if (se > 1)
+  const auto envelope_id = g8(p);
+  if (!schema::envelope_from_id(envelope_id, v.strobe_envelope_mode))
     return false;
-  v.strobe_envelope_mode = (effects::StrobeEnvelopeMode)se;
   v.background_brightness_q8 = g16(p);
   if (!gb(p, v.auto_gain_enabled))
     return false;
@@ -164,8 +169,13 @@ CodecStatus encode(const DeviceConfiguration &v, PayloadBuffer &o) {
     p16(p, c.physical.length_mm);
     p16(p, c.physical.density_pixels_per_metre);
   }
-  for (const auto &e : v.effects)
-    pe(p, e);
+  for (const auto &effect : v.effects) {
+    if (effect.type == effects::EffectType::off) {
+      pe(p, EffectDeviceConfig{});
+    } else {
+      pe(p, effect);
+    }
+  }
   const auto &i = v.idle_lighting;
   p8(p, i.enabled);
   p8(p, i.startup_idle_enabled);

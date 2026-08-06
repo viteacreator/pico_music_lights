@@ -40,7 +40,12 @@ add_executable(pico_music_lights
         src/config/device_config.cpp
         src/config/config_service.cpp
         src/config/device_config_codec.cpp
+        src/config/schema_enum_mapping.cpp
+        src/config/runtime_adapter.cpp
         src/config/crc32.cpp
+        src/config/config_diagnostics.cpp
+        src/config/config_boot.cpp
+        src/config/firmware_config_runtime.cpp
         src/storage/flash_backend.cpp
         src/storage/persistent_record.cpp
         src/storage/device_config_store.cpp
@@ -102,6 +107,11 @@ target_compile_definitions(pico_music_lights PRIVATE
         PICO_STDIO_USB_STDOUT_TIMEOUT_US=1000
         CFG_TUD_CDC_TX_BUFSIZE=512
         )
+
+# Fail at link time before extra flashable artifacts are produced if the
+# application enters the final 8 KiB reserved for Feature 005 slots.
+target_link_options(pico_music_lights PRIVATE
+        "LINKER:-T,${CMAKE_CURRENT_LIST_DIR}/src/storage/persistent_region_guard.ld")
 
 pico_add_extra_outputs(pico_music_lights)
 

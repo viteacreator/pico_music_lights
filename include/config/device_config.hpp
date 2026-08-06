@@ -113,9 +113,27 @@ enum class ValidationError : uint8_t {
   invalid_idle,
   invalid_audio
 };
+enum class ValidationSection : uint8_t { none, led, effect, idle, audio };
+enum class ValidationField : uint8_t {
+  none,
+  enabled,
+  pixel_count,
+  channel_order,
+  total_pixel_count,
+  effect_config,
+  logical_channel_mask,
+  activity_input_mask,
+  timing,
+  brightness,
+  activity_floor,
+  noise_floor,
+  hysteresis
+};
 struct ValidationResult {
   ValidationError error = ValidationError::ok;
   uint8_t channel = 0xff;
+  ValidationSection section = ValidationSection::none;
+  ValidationField field = ValidationField::none;
   constexpr explicit operator bool() const {
     return error == ValidationError::ok;
   }

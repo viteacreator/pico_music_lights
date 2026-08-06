@@ -26,30 +26,44 @@ ValidationResult validate(const DeviceConfiguration &v) {
   for (std::size_t i = 0; i < v.led_channels.size(); ++i) {
     const auto &c = v.led_channels[i];
     if (static_cast<uint8_t>(c.channel_order) > 1)
-      return {ValidationError::invalid_channel_order, (uint8_t)i};
+      return {ValidationError::invalid_channel_order, (uint8_t)i,
+              ValidationSection::led, ValidationField::channel_order};
     if (i >= board::kStripCount && c.enabled)
-      return {ValidationError::unsupported_channel, (uint8_t)i};
+      return {ValidationError::unsupported_channel, (uint8_t)i,
+              ValidationSection::led, ValidationField::enabled};
     if (c.enabled) {
       if (c.pixel_count < 1 || c.pixel_count > board::kMaxPixelsPerStrip)
-        return {ValidationError::invalid_pixel_count, (uint8_t)i};
+        return {ValidationError::invalid_pixel_count, (uint8_t)i,
+                ValidationSection::led, ValidationField::pixel_count};
       total += c.pixel_count;
     }
   }
   if (total > board::kMaxConfiguredPixels)
-    return {ValidationError::total_pixels, 0xff};
-  if ((v.idle_lighting.logical_channel_mask & 0xc0u) != 0 ||
-      v.idle_lighting.activity_input_mask & ~effects::kIdleAllInputs ||
-      v.idle_lighting.idle_brightness_q8 > 256)
-    return {ValidationError::invalid_idle, 0xff};
+    return {ValidationError::total_pixels, 0xff, ValidationSection::led,
+            ValidationField::total_pixel_count};
+  const auto &idle = v.idle_lighting;
+  if ((idle.logical_channel_mask & 0xc0u) != 0u ||
+      (idle.activity_input_mask & ~effects::kIdleAllInputs) != 0u ||
+      idle.idle_brightness_q8 > effects::kEffectUnityGain ||
+      idle.silence_timeout_ms > effects::kIdleMaximumTimingMs ||
+      idle.audio_confirmation_ms > effects::kIdleMaximumTimingMs ||
+      idle.fade_to_effect_ms > effects::kIdleMaximumTimingMs ||
+      idle.fade_to_idle_ms > effects::kIdleMaximumTimingMs ||
+      idle.left_activity_floor > 2047u || idle.right_activity_floor > 2047u ||
+      idle.aux_activity_floor > 2047u || idle.activity_hysteresis > 2047u)
+    return {ValidationError::invalid_idle, 0xff, ValidationSection::idle,
+            ValidationField::timing};
   if (v.audio_calibration.gyver_left_noise_floor > 2047 ||
       v.audio_calibration.gyver_right_noise_floor > 2047 ||
       v.audio_calibration.gyver_noise_gate_hysteresis > 2047)
-    return {ValidationError::invalid_audio, 0xff};
+    return {ValidationError::invalid_audio, 0xff, ValidationSection::audio,
+            ValidationField::noise_floor};
   for (std::size_t i = 0; i < v.effects.size(); ++i) {
-    auto r = to_runtime(v.effects[i], v.audio_calibration);
-    effects::EffectEngine engine;
-    if (engine.validate_config(r) != effects::EffectStatus::ok)
-      return {ValidationError::invalid_effect, (uint8_t)i};
+    const auto runtime = to_runtime(v.effects[i], v.audio_calibration);
+    if (effects::EffectEngine::validate_config(runtime) !=
+        effects::EffectStatus::ok)
+      return {ValidationError::invalid_effect, (uint8_t)i,
+              ValidationSection::effect, ValidationField::effect_config};
   }
   return {};
 }
