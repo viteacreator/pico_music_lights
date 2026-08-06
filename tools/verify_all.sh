@@ -5,7 +5,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
-readonly EXPECTED_TESTS=(led_logic_tests audio_processing_tests spectrum_analysis_tests diagnostic_renderer_tests effect_engine_tests)
+readonly EXPECTED_TESTS=(led_logic_tests audio_processing_tests spectrum_analysis_tests diagnostic_renderer_tests effect_engine_tests device_configuration_tests)
 readonly REQUIRED_COMMANDS=(cmake ninja gcc g++ clang clang++ python3 git rg picotool arm-none-eabi-gcc arm-none-eabi-g++ arm-none-eabi-readelf arm-none-eabi-objcopy arm-none-eabi-size arm-none-eabi-nm arm-none-eabi-objdump)
 
 for command_name in "${REQUIRED_COMMANDS[@]}"; do
@@ -58,6 +58,11 @@ for candidate in "$(dirname "${PICOTOOL_REAL}")" "$(dirname "${ARM_BIN_DIR}")/li
 done
 [[ -n "${PICOTOOL_CMAKE_DIR}" ]] || fail "no installed picotool 2.3.0 CMake package found"
 pass "prerequisites"
+PYTHONDONTWRITEBYTECODE=1 python3 "${SCRIPT_DIR}/test_persistent_link_guard.py" | tee -a "${SUMMARY}"
+pass "persistent_link_guard_negative_overlap"
+PYTHONDONTWRITEBYTECODE=1 python3 "${SCRIPT_DIR}/test_oversized_firmware.py" | tee -a "${SUMMARY}"
+pass "oversized_firmware_negative_build"
+pass "configuration_stack_budget"
 
 run_host() {
     local name="$1" compiler="$2" sanitizer="$3"
@@ -81,7 +86,7 @@ PY
     env "${env_args[@]}" ctest --test-dir "${build_dir}" --output-on-failure --no-tests=error 2>&1 | tee -a "${log}"
     if rg -i '(^|[^[:alpha:]])warning:' "${log}" >/dev/null; then fail "compiler warning detected in ${name}"; fi
     if rg -i '(AddressSanitizer|UndefinedBehaviorSanitizer|runtime error:)' "${log}" >/dev/null; then fail "sanitizer diagnostic detected in ${name}"; fi
-    pass "host_${name} suites=5"
+    pass "host_${name} suites=6"
 }
 run_host gcc g++ none
 run_host clang clang++ none
@@ -115,6 +120,7 @@ for language in C CXX ASM; do
 done
 cmake --build "${FIRMWARE_DIR}" --verbose 2>&1 | tee -a "${FIRMWARE_LOG}"
 if rg -i '(^|[^[:alpha:]])warning:' "${FIRMWARE_LOG}" >/dev/null; then fail "firmware compiler warning detected"; fi
+PYTHONDONTWRITEBYTECODE=1 python3 "${SCRIPT_DIR}/report_config_stack.py" --pico-build "${FIRMWARE_DIR}" | tee -a "${SUMMARY}"
 PREFIX="${FIRMWARE_DIR}/pico_music_lights"
 arm-none-eabi-objdump -d -S "${PREFIX}.elf" > "${PREFIX}.dis"
 PYTHONDONTWRITEBYTECODE=1 python3 "${SCRIPT_DIR}/validate_firmware.py" --prefix "${PREFIX}" \
@@ -125,5 +131,5 @@ pass "pico_w_release artifacts_validated"
 stage "Repository integrity"
 [[ -z "$(git -C "${REPO_ROOT}" status --porcelain=v1 --untracked-files=all)" ]] || { git -C "${REPO_ROOT}" status --short >&2; fail "verification modified repository content"; }
 pass "repository_unchanged"
-printf 'verification=PASS configurations=5 visible_stages=7 host_suites_each=5 output_dir=%s\n' "${OUTPUT_DIR}" | tee -a "${SUMMARY}"
+printf 'verification=PASS configurations=5 visible_stages=7 host_suites_each=6 output_dir=%s\n' "${OUTPUT_DIR}" | tee -a "${SUMMARY}"
 trap - EXIT

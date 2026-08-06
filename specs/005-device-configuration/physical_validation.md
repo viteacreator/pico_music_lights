@@ -39,3 +39,7 @@ Each procedure below requires the owner to record: build identifier, build type,
 11. LED factory-layout validation. Preconditions: confirmed factory reset. Action: inspect startup diagnostics and visible output. Expected diagnostics: logical channels 0–5 map through board configuration to GP2–GP7, use 132/174/141/81/96/72 pixels, GRBW order, enabled, no reversal, brightness 16/255, density 60, and unknown length; logical channels 6–7 are disabled with zero pixels, Effect Off, unknown length, unknown density, and no stored GPIO. Expected LEDs: every currently installed physical strip responds on its board-assigned GPIO and no reserved channel is driven.
 
 Physical validation is complete only after the owner reports observed results for the relevant procedures. Compilation or host tests do not prove physical flash timing, power-interruption behavior, LED electrical behavior, or startup observations.
+
+## Release layout used by the implementation
+
+The standard Pico W Release build reserves the final 8,192 bytes of the 2 MiB flash. The persistent region is `[0x101fe000, 0x10200000)`, slot A is `[0x101fe000, 0x101ff000)`, and slot B is `[0x101ff000, 0x10200000)`. Before using a build on hardware, confirm its `firmware-size-report.txt` contains `persistent_overlap=false` and an `application_image_end` no greater than `0x101fe000`. Do not flash an artifact that fails this check.

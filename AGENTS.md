@@ -39,7 +39,7 @@ The detailed engineering rules are in [`docs/DEVELOPMENT_RULES.md`](docs/DEVELOP
   use `-Wall -Wextra -Wpedantic -Werror`.
 - Run distinct GCC, Clang, GCC AddressSanitizer-only, and GCC
   UndefinedBehaviorSanitizer-only host configurations. Combined sanitizer
-  coverage is not a substitute. Every configuration must run all five registered
+  coverage is not a substitute. Every configuration must run all six registered
   host suites.
 - Run the standard Pico W Release build with Pico SDK 2.3.0, Arm GNU Toolchain
   15.2.Rel1 (GCC 15.2.1), and picotool 2.3.0. Validate the ELF, UF2, BIN, HEX,

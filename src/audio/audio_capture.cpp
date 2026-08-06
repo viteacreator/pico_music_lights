@@ -7,10 +7,10 @@
 namespace {
 
 enum class BufferState : uint8_t {
-    free,
-    filling,
-    ready,
-    processing,
+  free,
+  filling,
+  ready,
+  processing,
 };
 
 uint16_t buffers[2][kAudioInterleavedSamples];
@@ -26,144 +26,184 @@ volatile uint32_t buffer_sequences[2] = {0, 0};
 AudioProcessor processor;
 uint32_t overflow_events = 0;
 uint32_t underflow_events = 0;
+uint32_t paused_blocks = 0;
+bool capture_paused = false;
 
 void start_fill(int index) {
-    states[index] = BufferState::filling;
-    filling = index;
-    dma_channel_set_write_addr(dma_channel, buffers[index], false);
-    dma_channel_set_trans_count(dma_channel, kAudioInterleavedSamples, true);
+  states[index] = BufferState::filling;
+  filling = index;
+  dma_channel_set_write_addr(dma_channel, buffers[index], false);
+  dma_channel_set_trans_count(dma_channel, kAudioInterleavedSamples, true);
 }
 
 void dma_isr() {
-    dma_hw->ints0 = 1u << dma_channel;
+  dma_hw->ints0 = 1u << dma_channel;
 
-    const int completed = filling;
-    const int next = completed ^ 1;
-    buffer_sequences[completed] = ++capture_sequence;
+  const int completed = filling;
+  const int next = completed ^ 1;
+  buffer_sequences[completed] = ++capture_sequence;
 
-    if (states[next] == BufferState::free) {
-        states[completed] = BufferState::ready;
-        start_fill(next);
-    } else {
-        ++dropped;
-        states[completed] = BufferState::free;
-        start_fill(completed);
-    }
+  if (states[next] == BufferState::free) {
+    states[completed] = BufferState::ready;
+    start_fill(next);
+  } else {
+    ++dropped;
+    states[completed] = BufferState::free;
+    start_fill(completed);
+  }
 }
 
 void clear_fifo_errors() {
-    while (adc_fifo_get_level() != 0) {
-        (void)adc_fifo_get();
-    }
+  while (adc_fifo_get_level() != 0) {
+    (void)adc_fifo_get();
+  }
 
-    adc_hw->fcs = ADC_FCS_OVER_BITS | ADC_FCS_UNDER_BITS;
+  adc_hw->fcs = ADC_FCS_OVER_BITS | ADC_FCS_UNDER_BITS;
 }
 
 void record_and_clear_fifo_errors() {
-    const uint32_t errors = adc_hw->fcs & (ADC_FCS_OVER_BITS | ADC_FCS_UNDER_BITS);
+  const uint32_t errors =
+      adc_hw->fcs & (ADC_FCS_OVER_BITS | ADC_FCS_UNDER_BITS);
 
-    if (errors & ADC_FCS_OVER_BITS) {
-        ++overflow_events;
-    }
-    if (errors & ADC_FCS_UNDER_BITS) {
-        ++underflow_events;
-    }
-    if (errors != 0) {
-        adc_hw->fcs = adc_hw->fcs | errors;
-    }
+  if (errors & ADC_FCS_OVER_BITS) {
+    ++overflow_events;
+  }
+  if (errors & ADC_FCS_UNDER_BITS) {
+    ++underflow_events;
+  }
+  if (errors != 0) {
+    adc_hw->fcs = adc_hw->fcs | errors;
+  }
 }
 
-}  // namespace
+} // namespace
 
 bool audio_capture_initialize() {
-    adc_init();
-    adc_run(false);
-    clear_fifo_errors();
+  adc_init();
+  adc_run(false);
+  clear_fifo_errors();
 
-    for (uint gpio = 26; gpio <= 28; ++gpio) {
-        adc_gpio_init(gpio);
-    }
+  for (uint gpio = 26; gpio <= 28; ++gpio) {
+    adc_gpio_init(gpio);
+  }
 
-    adc_select_input(0);
-    adc_set_round_robin(0x7);
-    adc_fifo_setup(true, true, 1, false, false);
-    adc_set_clkdiv(499.0f);
+  adc_select_input(0);
+  adc_set_round_robin(0x7);
+  adc_fifo_setup(true, true, 1, false, false);
+  adc_set_clkdiv(499.0f);
 
-    dma_channel = dma_claim_unused_channel(false);
-    if (dma_channel < 0) {
-        return false;
-    }
+  dma_channel = dma_claim_unused_channel(false);
+  if (dma_channel < 0) {
+    return false;
+  }
 
-    dma_channel_config config = dma_channel_get_default_config(dma_channel);
-    channel_config_set_transfer_data_size(&config, DMA_SIZE_16);
-    channel_config_set_read_increment(&config, false);
-    channel_config_set_write_increment(&config, true);
-    channel_config_set_dreq(&config, DREQ_ADC);
-    dma_channel_configure(dma_channel, &config, buffers[0], &adc_hw->fifo, kAudioInterleavedSamples, false);
-    irq_set_exclusive_handler(DMA_IRQ_0, dma_isr);
-    dma_channel_set_irq0_enabled(dma_channel, true);
-    irq_set_enabled(DMA_IRQ_0, true);
+  dma_channel_config config = dma_channel_get_default_config(dma_channel);
+  channel_config_set_transfer_data_size(&config, DMA_SIZE_16);
+  channel_config_set_read_increment(&config, false);
+  channel_config_set_write_increment(&config, true);
+  channel_config_set_dreq(&config, DREQ_ADC);
+  dma_channel_configure(dma_channel, &config, buffers[0], &adc_hw->fifo,
+                        kAudioInterleavedSamples, false);
+  irq_set_exclusive_handler(DMA_IRQ_0, dma_isr);
+  dma_channel_set_irq0_enabled(dma_channel, true);
+  irq_set_enabled(DMA_IRQ_0, true);
 
-    states[0] = BufferState::filling;
-    filling = 0;
-    dma_channel_start(dma_channel);
-    adc_run(true);
-    return true;
+  states[0] = BufferState::filling;
+  filling = 0;
+  dma_channel_start(dma_channel);
+  adc_run(true);
+  return true;
 }
 
 bool audio_capture_has_ready_block() {
-    const uint32_t irq = save_and_disable_interrupts();
-    const bool ready = states[0] == BufferState::ready ||
-                       states[1] == BufferState::ready;
-    restore_interrupts(irq);
-    return ready;
+  const uint32_t irq = save_and_disable_interrupts();
+  const bool ready =
+      states[0] == BufferState::ready || states[1] == BufferState::ready;
+  restore_interrupts(irq);
+  return ready;
 }
 
-bool audio_capture_process(AudioLevelFrame& frame, CenteredMonoBlock& centered_mono) {
-    int index = -1;
-    const uint32_t irq = save_and_disable_interrupts();
+bool audio_capture_process(AudioLevelFrame &frame,
+                           CenteredMonoBlock &centered_mono) {
+  int index = -1;
+  const uint32_t irq = save_and_disable_interrupts();
 
-    for (int candidate = 0; candidate < 2; ++candidate) {
-        if (states[candidate] == BufferState::ready) {
-            states[candidate] = BufferState::processing;
-            index = candidate;
-            break;
-        }
+  for (int candidate = 0; candidate < 2; ++candidate) {
+    if (states[candidate] == BufferState::ready) {
+      states[candidate] = BufferState::processing;
+      index = candidate;
+      break;
     }
+  }
 
-    const uint32_t local_dropped = dropped;
-    restore_interrupts(irq);
+  const uint32_t local_dropped = dropped;
+  restore_interrupts(irq);
 
-    if (index < 0) {
-        return false;
-    }
+  if (index < 0) {
+    return false;
+  }
 
-    frame = process_audio_block(processor,
-                                buffers[index],
-                                buffer_sequences[index],
-                                local_dropped,
-                                &centered_mono);
+  frame =
+      process_audio_block(processor, buffers[index], buffer_sequences[index],
+                          local_dropped, &centered_mono);
 
-    const uint32_t lock = save_and_disable_interrupts();
-    states[index] = BufferState::free;
+  const uint32_t lock = save_and_disable_interrupts();
+  states[index] = BufferState::free;
 
-    if (filling < 0) {
-        start_fill(index);
-    }
+  if (filling < 0) {
+    start_fill(index);
+  }
 
-    restore_interrupts(lock);
-    record_and_clear_fifo_errors();
-    return true;
+  restore_interrupts(lock);
+  record_and_clear_fifo_errors();
+  return true;
 }
 
 uint32_t audio_capture_dma_channel() {
-    return dma_channel < 0 ? 0xffffffffu : static_cast<uint32_t>(dma_channel);
+  return dma_channel < 0 ? 0xffffffffu : static_cast<uint32_t>(dma_channel);
 }
 
-uint32_t audio_capture_fifo_errors() {
-    return overflow_events;
+uint32_t audio_capture_fifo_errors() { return overflow_events; }
+
+uint32_t audio_capture_fifo_underflows() { return underflow_events; }
+
+bool audio_capture_pause() {
+  const uint32_t irq = save_and_disable_interrupts();
+  if (capture_paused || dma_channel < 0 ||
+      states[0] == BufferState::processing ||
+      states[1] == BufferState::processing) {
+    restore_interrupts(irq);
+    return capture_paused;
+  }
+  adc_run(false);
+  dma_channel_set_irq0_enabled(dma_channel, false);
+  dma_channel_abort(dma_channel);
+  dma_hw->ints0 = 1u << dma_channel;
+  if (filling >= 0) {
+    states[filling] = BufferState::free;
+    filling = -1;
+    ++dropped;
+    ++paused_blocks;
+  }
+  capture_paused = true;
+  restore_interrupts(irq);
+  return true;
 }
 
-uint32_t audio_capture_fifo_underflows() {
-    return underflow_events;
+void audio_capture_resume() {
+  const uint32_t irq = save_and_disable_interrupts();
+  if (capture_paused) {
+    int available = states[0] == BufferState::free   ? 0
+                    : states[1] == BufferState::free ? 1
+                                                     : -1;
+    if (available >= 0) {
+      start_fill(available);
+      dma_channel_set_irq0_enabled(dma_channel, true);
+      adc_run(true);
+      capture_paused = false;
+    }
+  }
+  restore_interrupts(irq);
 }
+
+uint32_t audio_capture_paused_blocks() { return paused_blocks; }

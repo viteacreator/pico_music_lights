@@ -2,7 +2,7 @@
 
 `tools/verify_all.sh` is the sole authoritative full verification entry point.
 It performs clean GCC, Clang, ASan-only, UBSan-only, and Pico W Release builds;
-checks all five host suites explicitly; and validates every firmware artifact.
+checks all six host suites explicitly; and validates every firmware artifact.
 
 ## Prerequisites
 
