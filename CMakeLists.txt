@@ -37,6 +37,15 @@ pico_sdk_init()
 
 add_executable(pico_music_lights
         src/audio/audio_app.cpp
+        src/config/device_config.cpp
+        src/config/config_service.cpp
+        src/config/device_config_codec.cpp
+        src/config/crc32.cpp
+        src/storage/flash_backend.cpp
+        src/storage/persistent_record.cpp
+        src/storage/device_config_store.cpp
+        src/storage/save_coordinator.cpp
+        src/storage/rp2040_flash_backend.cpp
         src/audio/audio_capture.cpp
         src/audio/audio_processing.cpp
         src/audio/spectrum_analyzer.cpp
@@ -83,6 +92,7 @@ target_link_libraries(pico_music_lights
         hardware_dma
         hardware_pio
         hardware_adc
+        hardware_flash
         
         )
 

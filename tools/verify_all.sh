@@ -5,7 +5,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
-readonly EXPECTED_TESTS=(led_logic_tests audio_processing_tests spectrum_analysis_tests diagnostic_renderer_tests effect_engine_tests)
+readonly EXPECTED_TESTS=(led_logic_tests audio_processing_tests spectrum_analysis_tests diagnostic_renderer_tests effect_engine_tests device_configuration_tests)
 readonly REQUIRED_COMMANDS=(cmake ninja gcc g++ clang clang++ python3 git rg picotool arm-none-eabi-gcc arm-none-eabi-g++ arm-none-eabi-readelf arm-none-eabi-objcopy arm-none-eabi-size arm-none-eabi-nm arm-none-eabi-objdump)
 
 for command_name in "${REQUIRED_COMMANDS[@]}"; do
@@ -81,7 +81,7 @@ PY
     env "${env_args[@]}" ctest --test-dir "${build_dir}" --output-on-failure --no-tests=error 2>&1 | tee -a "${log}"
     if rg -i '(^|[^[:alpha:]])warning:' "${log}" >/dev/null; then fail "compiler warning detected in ${name}"; fi
     if rg -i '(AddressSanitizer|UndefinedBehaviorSanitizer|runtime error:)' "${log}" >/dev/null; then fail "sanitizer diagnostic detected in ${name}"; fi
-    pass "host_${name} suites=5"
+    pass "host_${name} suites=6"
 }
 run_host gcc g++ none
 run_host clang clang++ none
@@ -125,5 +125,5 @@ pass "pico_w_release artifacts_validated"
 stage "Repository integrity"
 [[ -z "$(git -C "${REPO_ROOT}" status --porcelain=v1 --untracked-files=all)" ]] || { git -C "${REPO_ROOT}" status --short >&2; fail "verification modified repository content"; }
 pass "repository_unchanged"
-printf 'verification=PASS configurations=5 visible_stages=7 host_suites_each=5 output_dir=%s\n' "${OUTPUT_DIR}" | tee -a "${SUMMARY}"
+printf 'verification=PASS configurations=5 visible_stages=7 host_suites_each=6 output_dir=%s\n' "${OUTPUT_DIR}" | tee -a "${SUMMARY}"
 trap - EXIT

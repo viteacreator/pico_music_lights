@@ -142,6 +142,12 @@ def main() -> int:
         in_ram = any(start <= address and end <= limit for start, limit in RAM_RANGES)
         if size and not (in_flash or in_ram):
             raise ValueError(f"allocatable section {name} lies outside RP2040 memory")
+    persistent_end = FLASH_START + 2 * 1024 * 1024
+    persistent_start = persistent_end - 8192
+    application_image_end = max((address + size for _, address, size in sections
+                                 if FLASH_START <= address < FLASH_END), default=FLASH_START)
+    if application_image_end > persistent_start:
+        raise ValueError(f"application image overlaps persistent region: {application_image_end:#x} > {persistent_start:#x}")
     flash = sum(size for _, address, size in sections
                 if FLASH_START <= address and address + size <= FLASH_END)
     ram = sum(size for _, address, size in sections
@@ -167,6 +173,16 @@ def main() -> int:
         f"gnu_text_bytes={text_size}", f"gnu_data_bytes={data_size}",
         f"gnu_bss_bytes={bss_size}", f"gnu_total_bytes={total}",
         f"address_flash_alloc_bytes={flash}", f"address_ram_alloc_bytes={ram}",
+        f"application_image_end={application_image_end:#010x}",
+        f"persistent_region_start={persistent_start:#010x}",
+        f"persistent_region_end={persistent_end:#010x}",
+        f"slot_a_start={persistent_start:#010x}",
+        f"slot_a_end={persistent_start + 4096:#010x}",
+        f"slot_b_start={persistent_start + 4096:#010x}",
+        f"slot_b_end={persistent_end:#010x}",
+        "persistent_overlap=false",
+        "schema_payload_buffer_bytes=978",
+        "slot_buffer_bytes=4096",
     ]
     lines.extend(f"artifact_{suffix[1:]}_bytes={path.stat().st_size}" for suffix, path in artifacts.items())
     lines.append("largest_flash_symbols=size,address,type,name")
